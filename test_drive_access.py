@@ -80,4 +80,15 @@ def probe_video(path):
 def main():
     service = get_drive_service()
     print(f"Trazim fajl koji sadrzi: '{NAME_CONTAINS}'")
-    file_info =
+    file_info = find_file(service, FOLDER_ID, NAME_CONTAINS)
+    size_gb = int(file_info.get("size", 0)) / (1024**3)
+    print(f"Pronadjen: '{file_info['name']}' (~{size_gb:.2f} GB) -> preuzimam...")
+    download_file(service, file_info["id"], LOCAL_PATH)
+    print("Preuzimanje zavrseno. Pokrecem ffprobe...")
+    probe_video(LOCAL_PATH)
+    actual_size = os.path.getsize(LOCAL_PATH) / (1024**3)
+    print(f"Velicina preuzetog fajla na disku: {actual_size:.2f} GB")
+
+
+if __name__ == "__main__":
+    main()
