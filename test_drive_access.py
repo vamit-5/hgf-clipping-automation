@@ -22,6 +22,8 @@ def find_file(service, folder_id, name_contains):
         q=f"'{folder_id}' in parents and trashed = false",
         fields="files(id, name, size, mimeType)",
         pageSize=200,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
     ).execute()
     files = results.get("files", [])
     print(f"Ukupno stavki u folderu: {len(files)}")
