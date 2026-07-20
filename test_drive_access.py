@@ -51,30 +51,33 @@ def probe_video(path):
     cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "v:0",
-        "-show_entries", "stream=width,height,duration,r_frame_rate:stream_tags=rotate:side_data=rotation",
+        "-show_streams", "-show_format",
         "-of", "json",
         path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    print("ffprobe stdout:")
-    print(result.stdout)
-    if result.stderr:
-        print("ffprobe stderr:")
-        print(result.stderr)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    data = json.loads(result.stdout)
+    stream = data["streams"][0]
+    fmt = data.get("format", {})
+
+    width = stream.get("width")
+    height = stream.get("height")
+    duration = stream.get("duration") or fmt.get("duration")
+    rotate_tag = stream.get("tags", {}).get("rotate")
+    side_data = stream.get("side_data_list", [])
+    rotation_side = None
+    for sd in side_data:
+        if "rotation" in sd:
+            rotation_side = sd["rotation"]
+
+    print("\n--- REZULTAT PROBE-A ---")
+    print(f"Rezolucija: {width}x{height}")
+    print(f"Trajanje: {duration} sekundi")
+    print(f"Rotate tag: {rotate_tag}")
+    print(f"Rotation (side data): {rotation_side}")
 
 
 def main():
     service = get_drive_service()
     print(f"Trazim fajl koji sadrzi: '{NAME_CONTAINS}'")
-    file_info = find_file(service, FOLDER_ID, NAME_CONTAINS)
-    size_gb = int(file_info.get("size", 0)) / (1024**3)
-    print(f"Pronadjen: '{file_info['name']}' (~{size_gb:.2f} GB) -> preuzimam...")
-    download_file(service, file_info["id"], LOCAL_PATH)
-    print("Preuzimanje zavrseno. Pokrecem ffprobe...")
-    probe_video(LOCAL_PATH)
-    actual_size = os.path.getsize(LOCAL_PATH) / (1024**3)
-    print(f"Velicina preuzetog fajla na disku: {actual_size:.2f} GB")
-
-
-if __name__ == "__main__":
-    main()
+    file_info =
