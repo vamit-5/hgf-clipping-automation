@@ -6,7 +6,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 FOLDER_ID = "1nrmfGxqCNLH0RdIgzGOV6v_O0aEfcxRb"
-TARGET_FILENAME = "HGF_INTV_EP2_Maria Vardag Divorce Lawyer_Final_V3 (1).mp4"
+NAME_CONTAINS = "Maria Vardag"
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 LOCAL_PATH = "source_test.mp4"
 
@@ -17,17 +17,21 @@ def get_drive_service():
     return build("drive", "v3", credentials=credentials)
 
 
-def find_file_id(service, folder_id, filename):
-    escaped = filename.replace("'", "\\'")
+def find_file(service, folder_id, name_contains):
     results = service.files().list(
-        q=f"'{folder_id}' in parents and trashed = false and name = '{escaped}'",
-        fields="files(id, name, size)",
-        pageSize=5,
+        q=f"'{folder_id}' in parents and trashed = false",
+        fields="files(id, name, size, mimeType)",
+        pageSize=200,
     ).execute()
     files = results.get("files", [])
-    if not files:
-        raise RuntimeError(f"Fajl '{filename}' nije pronadjen u folderu.")
-    return files[0]
+    print(f"Ukupno stavki u folderu: {len(files)}")
+    matches = [f for f in files if name_contains.lower() in f["name"].lower()]
+    if not matches:
+        print("Sva imena fajlova koja postoje u folderu:")
+        for f in files:
+            print(f"   -> '{f['name']}'")
+        raise RuntimeError(f"Nijedan fajl ne sadrzi '{name_contains}' u imenu.")
+    return matches[0]
 
 
 def download_file(service, file_id, destination):
@@ -59,10 +63,10 @@ def probe_video(path):
 
 def main():
     service = get_drive_service()
-    print(f"Trazim fajl: {TARGET_FILENAME}")
-    file_info = find_file_id(service, FOLDER_ID, TARGET_FILENAME)
+    print(f"Trazim fajl koji sadrzi: '{NAME_CONTAINS}'")
+    file_info = find_file(service, FOLDER_ID, NAME_CONTAINS)
     size_gb = int(file_info.get("size", 0)) / (1024**3)
-    print(f"Pronadjen: {file_info['name']} (~{size_gb:.2f} GB) -> preuzimam...")
+    print(f"Pronadjen: '{file_info['name']}' (~{size_gb:.2f} GB) -> preuzimam...")
     download_file(service, file_info["id"], LOCAL_PATH)
     print("Preuzimanje zavrseno. Pokrecem ffprobe...")
     probe_video(LOCAL_PATH)
