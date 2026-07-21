@@ -40,7 +40,7 @@ MAX_CLIP_SECONDS = 48
 MAX_SINGLE_CLIP_SECONDS = 18  # jedna pojedinacna izjava u supercutu ne sme biti duza od ovoga
 HOOKS_PER_FILE = 8
 DAILY_TARGET = 10
-ALLOWED_UTC_HOURS = set(range(12, 23))  # 12:00 - 22:59 UTC
+ALLOWED_UTC_HOURS = set(range(0, 24))  # PRIVREMENO OTVORENO 24/7 - SAMO ZA TEST, VRATI POSLE NA range(12, 23)
 LOCK_FRESHNESS_MINUTES = 25
 
 CAPTION_TEXT = (
