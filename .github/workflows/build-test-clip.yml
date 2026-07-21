@@ -1,0 +1,42 @@
+name: Build Test Clip
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Cache downloaded source video
+        uses: actions/cache@v4
+        with:
+          path: |
+            source.mp4
+            watermark.png
+          key: hgf-source-v1
+
+      - name: Build clip
+        env:
+          GDRIVE_CREDENTIALS_JSON: ${{ secrets.GDRIVE_CREDENTIALS_JSON }}
+        run: python make_clip.py
+
+      - name: Upload clip as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-clip
+          path: clip_output.mp4
+          retention-days: 3
