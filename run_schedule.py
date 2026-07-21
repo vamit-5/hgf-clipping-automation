@@ -59,6 +59,8 @@ def retry_request(func, description):
     raise RuntimeError(f"{description} nije uspeo nakon {RETRY_ATTEMPTS} pokusaja.") from last_error
 
 
+# ---------- git helpers ----------
+
 def git_run(cmd):
     return subprocess.run(["git"] + cmd, capture_output=True, text=True)
 
@@ -118,6 +120,8 @@ def commit_and_push_state(message):
     return False
 
 
+# ---------- state files ----------
+
 def load_json(path, default):
     if os.path.exists(path):
         with open(path) as f:
@@ -134,6 +138,8 @@ def save_json(path, data):
 def get_today_key():
     return datetime.datetime.utcnow().strftime("%Y-%m-%d")
 
+
+# ---------- Google Drive ----------
 
 def get_drive_service():
     creds_info = json.loads(os.environ["GDRIVE_CREDENTIALS_JSON"])
@@ -164,14 +170,19 @@ def download_by_id(service, file_id, destination):
     if os.path.exists(destination):
         print(f"{destination} vec postoji, preskacem preuzimanje.")
         return
+    tmp_destination = destination + ".partial"
     request = service.files().get_media(fileId=file_id)
-    with open(destination, "wb") as fh:
+    with open(tmp_destination, "wb") as fh:
         downloader = MediaIoBaseDownload(fh, request, chunksize=50 * 1024 * 1024)
         done = False
         while not done:
-            status, done = downloader.next_chunk()
+            # num_retries>0 makes the library itself retry transient network/5xx
+            # errors on this chunk with exponential backoff, instead of failing
+            # the whole multi-GB download over one dropped connection.
+            status, done = downloader.next_chunk(num_retries=5)
             if status:
                 print(f"Preuzeto: {int(status.progress() * 100)}%")
+    os.rename(tmp_destination, destination)
 
 
 def get_duration_seconds(path):
@@ -180,6 +191,8 @@ def get_duration_seconds(path):
     data = json.loads(result.stdout)
     return float(data["format"]["duration"])
 
+
+# ---------- transcription / hook discovery (per file, cached) ----------
 
 def extract_audio(source_path, audio_path, duration_seconds):
     target_bitrate = max(24, min(64, int((23 * 8 * 1024) / duration_seconds)))
@@ -289,6 +302,8 @@ def ensure_hooks_for_file(file_info, hooks_cache, openai_key, anthropic_key):
     return hooks_cache[file_id]
 
 
+# ---------- segment selection ----------
+
 def pick_next_segment(used_segments, hooks_cache):
     file_ids_sorted = sorted(hooks_cache.keys(), key=lambda fid: len(used_segments.get(fid, [])))
     for fid in file_ids_sorted:
@@ -299,6 +314,8 @@ def pick_next_segment(used_segments, hooks_cache):
                 return fid, hook
     return None, None
 
+
+# ---------- captions ----------
 
 def group_words_into_captions(words, max_words_per_group=4, max_gap=0.6):
     groups = []
@@ -351,6 +368,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.writelines(lines)
 
 
+# ---------- video build (dynamic left/right full-screen crop + watermark + captions) ----------
+
 def build_clip(source_path, watermark_path, captions_path, output_path, start_seconds, length_seconds, switch_every=3.5):
     filter_complex = (
         "[0:v]scale=3413:1920[scaled];"
@@ -379,6 +398,8 @@ def build_clip(source_path, watermark_path, captions_path, output_path, start_se
         raise RuntimeError("ffmpeg obrada nije uspela.")
     print("Obrada zavrsena uspesno.")
 
+
+# ---------- Cloudinary / Instagram ----------
 
 def upload_to_cloudinary(path, cloud_name, upload_preset):
     url = f"https://api.cloudinary.com/v1_1/{cloud_name}/video/upload"
@@ -492,6 +513,8 @@ def main():
         source_path = f"tmp_{file_id}.mp4"
         download_by_id(service, file_id, source_path)
 
+        transcript_words_path = f"tmp_{file_id}_words.json"
+        # re-transcribe only if we don't still have the words cached locally from this run
         audio_path = f"tmp_{file_id}.mp3"
         extract_audio(source_path, audio_path, file_meta["duration"])
         words = transcribe_audio(audio_path, openai_key)
