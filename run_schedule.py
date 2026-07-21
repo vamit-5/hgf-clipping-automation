@@ -4,12 +4,19 @@ import time
 import datetime
 import subprocess
 import requests
+import cv2
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 FOLDER_ID = "1nrmfGxqCNLH0RdIgzGOV6v_O0aEfcxRb"
 WATERMARK_FILE_ID = "1a3FqXNdhtW-QdFq_ww7G_bwdIAUg-7fh"
+# Opciono: Google Drive FILE ID pozadinske (dramaticne) muzike, bez copyright-a.
+# Ostavi prazno ("") dok ne izaberes i uploadujes fajl u Drive folder - dokle god
+# je prazno, pozadinska muzika se jednostavno preskace, nista se ne kvari.
+BACKGROUND_AUDIO_FILE_ID = ""
+BACKGROUND_AUDIO_PATH = "background_audio.mp3"
+BACKGROUND_AUDIO_VOLUME = 0.15  # 15% jacine u odnosu na govor - cujno, ali ne prekriva govor
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 STATE_DIR = "state"
@@ -192,6 +199,107 @@ def get_duration_seconds(path):
     return float(data["format"]["duration"])
 
 
+# ---------- automatska detekcija pozicije lica (za precizno secenje 9:16) ----------
+
+DEFAULT_CROP_LEFT_X = 313
+DEFAULT_CROP_RIGHT_X = 2019
+FACE_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+
+
+def compute_half_crop_offset(face_center_x, half_start, half_width, crop_width, scale_factor):
+    """Racuna x-poziciju secenja (u skaliranom 3413px prostoru) tako da bude
+    centrirana na detektovano lice, ali da ostane unutar granica te polovine."""
+    scaled_face_center = face_center_x * scale_factor
+    scaled_half_start = half_start * scale_factor
+    scaled_half_end = (half_start + half_width) * scale_factor
+    crop_x = scaled_face_center - crop_width / 2
+    crop_x = max(scaled_half_start, min(crop_x, scaled_half_end - crop_width))
+    return round(crop_x)
+
+
+def detect_crop_offsets(video_path, duration_seconds):
+    """Uzima nekoliko frejmova iz izvornog snimka i detektuje gde se tacno nalazi
+    lice u levoj i desnoj polovini kadra, umesto da se pretpostavlja da je snimak
+    savrseno centriran 50/50. Ako detekcija ne uspe, vraca podrazumevane vrednosti."""
+    try:
+        cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
+        if cascade.empty():
+            print("Haar cascade nije ucitan, koristim podrazumevane vrednosti za secenje.")
+            return DEFAULT_CROP_LEFT_X, DEFAULT_CROP_RIGHT_X
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print("Nisam mogao da otvorim video za detekciju lica, koristim podrazumevane vrednosti.")
+            return DEFAULT_CROP_LEFT_X, DEFAULT_CROP_RIGHT_X
+
+        frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or int(duration_seconds * fps)
+
+        if frame_w == 0 or frame_h == 0 or total_frames <= 0:
+            cap.release()
+            print("Neispravni podaci o videu za detekciju lica, koristim podrazumevane vrednosti.")
+            return DEFAULT_CROP_LEFT_X, DEFAULT_CROP_RIGHT_X
+
+        sample_count = 10
+        sample_indices = [int(total_frames * (i + 1) / (sample_count + 1)) for i in range(sample_count)]
+
+        half_w = frame_w // 2
+        left_centers = []
+        right_centers = []
+
+        for idx in sample_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            left_gray = gray[:, :half_w]
+            right_gray = gray[:, half_w:]
+
+            left_faces = cascade.detectMultiScale(left_gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            if len(left_faces) > 0:
+                x, y, w, h = max(left_faces, key=lambda r: r[2] * r[3])
+                left_centers.append(x + w / 2)
+
+            right_faces = cascade.detectMultiScale(right_gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            if len(right_faces) > 0:
+                x, y, w, h = max(right_faces, key=lambda r: r[2] * r[3])
+                right_centers.append(half_w + x + w / 2)
+
+        cap.release()
+
+        scale_factor = 1920 / frame_h
+        crop_width = 1080
+
+        if left_centers:
+            left_centers.sort()
+            median_left = left_centers[len(left_centers) // 2]
+            left_x = compute_half_crop_offset(median_left, 0, half_w, crop_width, scale_factor)
+        else:
+            print("Nije pronadjeno lice u levoj polovini ni u jednom frejmu, koristim podrazumevanu vrednost.")
+            left_x = DEFAULT_CROP_LEFT_X
+
+        if right_centers:
+            right_centers.sort()
+            median_right = right_centers[len(right_centers) // 2]
+            right_x = compute_half_crop_offset(median_right, half_w, frame_w - half_w, crop_width, scale_factor)
+        else:
+            print("Nije pronadjeno lice u desnoj polovini ni u jednom frejmu, koristim podrazumevanu vrednost.")
+            right_x = DEFAULT_CROP_RIGHT_X
+
+        print(
+            f"Detekcija lica gotova: leva pozicija={left_x} ({len(left_centers)}/{sample_count} uspesnih), "
+            f"desna pozicija={right_x} ({len(right_centers)}/{sample_count} uspesnih)."
+        )
+        return left_x, right_x
+
+    except Exception as e:
+        print(f"Detekcija lica nije uspela ({e}), koristim podrazumevane vrednosti.")
+        return DEFAULT_CROP_LEFT_X, DEFAULT_CROP_RIGHT_X
+
+
 # ---------- transcription / hook discovery (per file, cached) ----------
 
 def extract_audio(source_path, audio_path, duration_seconds):
@@ -282,22 +390,47 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
 
 def ensure_hooks_for_file(file_info, hooks_cache, openai_key, anthropic_key):
     file_id = file_info["id"]
-    if file_id in hooks_cache and hooks_cache[file_id].get("hooks"):
-        return hooks_cache[file_id]
+    cached = hooks_cache.get(file_id)
 
-    print(f"Nema keširanih hookova za '{file_info['name']}', pravim transkripciju...")
+    needs_hooks = not cached or not cached.get("hooks")
+    needs_crop = not cached or "crop_left_x" not in cached or "crop_right_x" not in cached
+
+    if not needs_hooks and not needs_crop:
+        return cached
+
+    print(
+        f"Azuriram podatke za '{file_info['name']}' "
+        f"(hookovi: {'da' if needs_hooks else 'ne treba'}, secenje lica: {'da' if needs_crop else 'ne treba'})..."
+    )
     tmp_source = f"tmp_{file_id}.mp4"
-    tmp_audio = f"tmp_{file_id}.mp3"
     service = get_drive_service()
     download_by_id(service, file_id, tmp_source)
     duration = get_duration_seconds(tmp_source)
-    extract_audio(tmp_source, tmp_audio, duration)
-    words = transcribe_audio(tmp_audio, openai_key)
-    hooks = find_hook_segments(words, anthropic_key, duration)
-    os.remove(tmp_source)
-    os.remove(tmp_audio)
 
-    hooks_cache[file_id] = {"name": file_info["name"], "duration": duration, "hooks": hooks}
+    if needs_hooks:
+        tmp_audio = f"tmp_{file_id}.mp3"
+        extract_audio(tmp_source, tmp_audio, duration)
+        words = transcribe_audio(tmp_audio, openai_key)
+        hooks = find_hook_segments(words, anthropic_key, duration)
+        os.remove(tmp_audio)
+    else:
+        hooks = cached["hooks"]
+        duration = cached.get("duration", duration)
+
+    if needs_crop:
+        crop_left_x, crop_right_x = detect_crop_offsets(tmp_source, duration)
+    else:
+        crop_left_x, crop_right_x = cached["crop_left_x"], cached["crop_right_x"]
+
+    os.remove(tmp_source)
+
+    hooks_cache[file_id] = {
+        "name": file_info["name"],
+        "duration": duration,
+        "hooks": hooks,
+        "crop_left_x": crop_left_x,
+        "crop_right_x": crop_right_x,
+    }
     save_json(HOOKS_CACHE_PATH, hooks_cache)
     return hooks_cache[file_id]
 
@@ -353,7 +486,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
-Style: Caption,Liberation Sans,74,&H00FFFFFF,&H00000000,&H00000000,1,0,1,6,0,2,60,60,150
+Style: Caption,Liberation Sans,74,&H00FFFFFF,&H00000000,&H00000000,1,0,1,6,0,2,60,60,480
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -370,27 +503,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 # ---------- video build (dynamic left/right full-screen crop + watermark + captions) ----------
 
-def build_clip(source_path, watermark_path, captions_path, output_path, start_seconds, length_seconds, switch_every=3.5):
-    filter_complex = (
-        "[0:v]scale=3413:1920[scaled];"
-        f"[scaled]crop=1080:1920:x='if(lt(mod(t\\,{switch_every*2}),{switch_every}),313,2019)':y=0[cropped];"
-        "[1:v]scale=220:-1[wm];"
-        "[cropped][wm]overlay=W-w-40:H-h-40[pre];"
-        f"[pre]ass={captions_path}[outv]"
-    )
+def build_clip(source_path, watermark_path, captions_path, output_path, start_seconds, length_seconds,
+               crop_left_x=DEFAULT_CROP_LEFT_X, crop_right_x=DEFAULT_CROP_RIGHT_X,
+               background_audio_path=None, switch_every=3.5):
+    filter_parts = [
+        "[0:v]scale=3413:1920[scaled];",
+        f"[scaled]crop=1080:1920:x='if(lt(mod(t\\,{switch_every*2}),{switch_every}),{crop_left_x},{crop_right_x})':y=0[cropped];",
+        "[1:v]scale=220:-1[wm];",
+        "[cropped][wm]overlay=W-w-40:H-h-40[pre];",
+        f"[pre]ass={captions_path}[outv];",
+    ]
+
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(start_seconds), "-t", str(length_seconds),
         "-i", source_path,
         "-i", watermark_path,
+    ]
+
+    has_bg_audio = bool(background_audio_path) and os.path.exists(background_audio_path)
+    if has_bg_audio:
+        # -stream_loop -1 pusta pozadinsku muziku u krug ako je kraca od klipa
+        cmd += ["-stream_loop", "-1", "-i", background_audio_path]
+        filter_parts.append(
+            "[0:a]volume=1.0[dlg];"
+            f"[2:a]atrim=0:{length_seconds},volume={BACKGROUND_AUDIO_VOLUME}[bg];"
+            "[dlg][bg]amix=inputs=2:duration=first:dropout_transition=0[outa];"
+        )
+        audio_map = ["-map", "[outa]"]
+    else:
+        audio_map = ["-map", "0:a?"]
+
+    filter_complex = "".join(filter_parts).rstrip(";")
+
+    cmd += [
         "-filter_complex", filter_complex,
-        "-map", "[outv]", "-map", "0:a?",
+        "-map", "[outv]", *audio_map,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
         output_path,
     ]
-    print("Pokrecem ffmpeg obradu (dinamicna smena kadra + watermark + titlovi)...")
+    print(f"Pokrecem ffmpeg obradu (secenje x={crop_left_x}/{crop_right_x}, watermark, titlovi"
+          f"{', pozadinska muzika' if has_bg_audio else ''})...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print("FFMPEG GRESKA:")
@@ -492,6 +647,8 @@ def main():
         print(f"Pronadjeno {len(video_files)} video fajlova u folderu.")
 
         download_by_id(service, WATERMARK_FILE_ID, WATERMARK_PATH)
+        if BACKGROUND_AUDIO_FILE_ID:
+            download_by_id(service, BACKGROUND_AUDIO_FILE_ID, BACKGROUND_AUDIO_PATH)
 
         openai_key = os.environ["OPENAI_API_KEY"]
         anthropic_key = os.environ["ANTHROPIC_API_KEY"]
@@ -522,7 +679,13 @@ def main():
         captions_path = "captions.ass"
         build_captions_file(words, hook["start"], hook["end"], captions_path)
 
-        build_clip(source_path, WATERMARK_PATH, captions_path, OUTPUT_PATH, hook["start"], hook["end"] - hook["start"])
+        build_clip(
+            source_path, WATERMARK_PATH, captions_path, OUTPUT_PATH,
+            hook["start"], hook["end"] - hook["start"],
+            crop_left_x=file_meta.get("crop_left_x", DEFAULT_CROP_LEFT_X),
+            crop_right_x=file_meta.get("crop_right_x", DEFAULT_CROP_RIGHT_X),
+            background_audio_path=BACKGROUND_AUDIO_PATH if BACKGROUND_AUDIO_FILE_ID else None,
+        )
 
         cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"]
         upload_preset = os.environ["CLOUDINARY_UPLOAD_PRESET"]
