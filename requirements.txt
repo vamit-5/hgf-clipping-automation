@@ -1,4 +1,3 @@
 google-api-python-client
 google-auth
 requests
-opencv-python-headless
