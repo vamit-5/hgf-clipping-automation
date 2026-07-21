@@ -43,7 +43,9 @@
         "end": 1590.0,
         "reason": "Otkrivenje - ekonomija je 'zastita reket za bogate', a ne nauka"
       }
-    ]
+    ],
+    "crop_left_x": 313,
+    "crop_right_x": 2019
   },
   "1aR6bpmKwxWB3HySpcBVZcmeIrKOmrEzs": {
     "name": "HGF_INTV_EP2_Maria Vardag Divorce Lawyer_Final_V3 (1).mp4",
@@ -89,7 +91,9 @@
         "end": 480.4,
         "reason": "Paradoks: \u017dene dobijaju ogromne sume novca pri razvodu ali nemaju pojma kako da ih upravljaju"
       }
-    ]
+    ],
+    "crop_left_x": 313,
+    "crop_right_x": 2019
   },
   "1E-r2ZVmAkJYoyoA6Y82ImEr5BvkA5L85": {
     "name": "HGF_intv_Sharmadean_Youtube (1).mp4",
@@ -135,6 +139,8 @@
         "end": 952.2,
         "reason": "Provokativna izjava da mu\u0161karci mogu do\u0107i na sastanke u doma\u0107im odelima, \u017eene ne smeju - \u0434\u0438\u0440\u0435\u043a\u0442\u043d\u0430 kritika dvostrukog standarda"
       }
-    ]
+    ],
+    "crop_left_x": 313,
+    "crop_right_x": 2019
   }
 }
