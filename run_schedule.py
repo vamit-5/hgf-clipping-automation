@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import random
 import datetime
 import subprocess
 import requests
@@ -11,11 +12,13 @@ from googleapiclient.http import MediaIoBaseDownload
 
 FOLDER_ID = "1nrmfGxqCNLH0RdIgzGOV6v_O0aEfcxRb"
 WATERMARK_FILE_ID = "1a3FqXNdhtW-QdFq_ww7G_bwdIAUg-7fh"
-# Opciono: Google Drive FILE ID pozadinske (dramaticne) muzike, bez copyright-a.
-# Ostavi prazno ("") dok ne izaberes i uploadujes fajl u Drive folder - dokle god
-# je prazno, pozadinska muzika se jednostavno preskace, nista se ne kvari.
-BACKGROUND_AUDIO_FILE_ID = ""
-BACKGROUND_AUDIO_PATH = "background_audio.mp3"
+# Google Drive FILE ID-jevi pozadinske (dramaticne) muzike, bez copyright-a.
+# Za svaki objavljeni klip se nasumicno bira JEDNA od ovih numera (radi
+# raznovrsnosti). Prazna lista = pozadinska muzika se preskace, nista se ne kvari.
+BACKGROUND_AUDIO_FILE_IDS = [
+    "1yHsLDQ9yUUe6VtppKUa_MD978Gz7OOHR",
+    "1ANHCMAKisUvpxR8KYp0zRnkmKzblj8PN",
+]
 BACKGROUND_AUDIO_VOLUME = 0.15  # 15% jacine u odnosu na govor - cujno, ali ne prekriva govor
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
@@ -28,8 +31,8 @@ LOCK_PATH = f"{STATE_DIR}/lock.txt"
 WATERMARK_PATH = "watermark.png"
 OUTPUT_PATH = "clip_output.mp4"
 
-MIN_CLIP_SECONDS = 45
-MAX_CLIP_SECONDS = 75
+MIN_CLIP_SECONDS = 32
+MAX_CLIP_SECONDS = 45
 HOOKS_PER_FILE = 8
 DAILY_TARGET = 10
 ALLOWED_UTC_HOURS = set(range(12, 23))  # 12:00 - 22:59 UTC
@@ -217,10 +220,13 @@ def compute_half_crop_offset(face_center_x, half_start, half_width, crop_width, 
     return round(crop_x)
 
 
-def detect_crop_offsets(video_path, duration_seconds):
-    """Uzima nekoliko frejmova iz izvornog snimka i detektuje gde se tacno nalazi
-    lice u levoj i desnoj polovini kadra, umesto da se pretpostavlja da je snimak
-    savrseno centriran 50/50. Ako detekcija ne uspe, vraca podrazumevane vrednosti."""
+def detect_crop_offsets(video_path, duration_seconds, start_seconds=None, end_seconds=None):
+    """Uzima nekoliko frejmova IZ TACNO ONOG DELA snimka koji ce se koristiti za
+    klip (start_seconds -> end_seconds) i detektuje gde se tacno nalazi lice u
+    levoj i desnoj polovini kadra u TOM segmentu - ne prosek celog sata snimka,
+    vec ono sto se stvarno vidi u ovih ~40 sekundi. To je bitno jer se ljudi
+    pomeraju/gestikuliraju, pa prosek celog fajla cesto ne odgovara konkretnom
+    isecku. Ako detekcija ne uspe, vraca podrazumevane vrednosti."""
     try:
         cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
         if cascade.empty():
@@ -242,8 +248,18 @@ def detect_crop_offsets(video_path, duration_seconds):
             print("Neispravni podaci o videu za detekciju lica, koristim podrazumevane vrednosti.")
             return DEFAULT_CROP_LEFT_X, DEFAULT_CROP_RIGHT_X
 
-        sample_count = 10
-        sample_indices = [int(total_frames * (i + 1) / (sample_count + 1)) for i in range(sample_count)]
+        range_start = start_seconds if start_seconds is not None else 0.0
+        range_end = end_seconds if end_seconds is not None else duration_seconds
+        start_frame = max(0, int(range_start * fps))
+        end_frame = min(total_frames - 1, int(range_end * fps))
+        if end_frame <= start_frame:
+            start_frame, end_frame = 0, total_frames - 1
+
+        sample_count = 15
+        sample_indices = [
+            start_frame + int((end_frame - start_frame) * (i + 1) / (sample_count + 1))
+            for i in range(sample_count)
+        ]
 
         half_w = frame_w // 2
         left_centers = []
@@ -341,11 +357,15 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
         "u sekundama pre svake reci (format [12.3] rec).\n\n"
         f"{transcript_text}\n\n"
         f"Pronadji {n_hooks} RAZLICITIH, NAJSNAZNIJIH, sokantnih ili kontroverznih trenutaka u ovom "
-        f"transkriptu, od kojih svaki moze da posluzi kao 'hook' (kuka za paznju) na pocetku kratkog "
-        f"klipa za drustvene mreze. Svaki hook MORA biti stvarno provokativan/iznenadjujuc, ne samo "
-        f"informativan — trazimo reakciju 'cekaj, sta?!' od gledaoca u prve 3 sekunde. Segmenti ne smeju "
-        f"da se preklapaju. Svaki mora trajati izmedju {MIN_CLIP_SECONDS} i {MAX_CLIP_SECONDS} sekundi, "
-        f"i MORA poceti tacno na pocetku te snazne izjave. Video traje ukupno {total_duration:.0f}s.\n\n"
+        f"transkriptu, od kojih svaki moze da posluzi kao samostalan kratak klip za drustvene mreze. "
+        f"Svaki hook MORA biti stvarno provokativan/iznenadjujuc, ne samo informativan — trazimo reakciju "
+        f"'cekaj, sta?!' od gledaoca u prve 3 sekunde. Segmenti ne smeju da se preklapaju.\n\n"
+        f"VAZNO - klip mora biti KRATAK I FOKUSIRAN ISKLJUCIVO na tu jednu sok-izjavu: BEZ uvoda, BEZ "
+        f"objasnjenja pre nje, BEZ nastavka razgovora posle nje koji vise nije direktno vezan za sok deo. "
+        f"Ne biraj ceo tok razgovora - samo taj jedan snazan momenat i njegovu neposrednu okolinu. "
+        f"Svaki segment MORA trajati izmedju {MIN_CLIP_SECONDS} i {MAX_CLIP_SECONDS} sekundi (cilj je "
+        f"oko 35-40 sekundi), i MORA poceti tacno na pocetku te snazne izjave (ne par recenica ranije). "
+        f"Video traje ukupno {total_duration:.0f}s.\n\n"
         "Odgovori ISKLJUCIVO validnim JSON nizom, bez ikakvog dodatnog teksta, u ovom obliku:\n"
         '[{"start": <broj>, "end": <broj>, "reason": "<kratko objasnjenje na srpskom>"}, ...]'
     )
@@ -389,48 +409,26 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
 
 
 def ensure_hooks_for_file(file_info, hooks_cache, openai_key, anthropic_key):
+    # Napomena: pozicija secenja lica se NE cuva ovde vise - racuna se posebno za
+    # svaki konkretan izabrani isecak (u main()), jer prosek celog fajla ne
+    # odgovara uvek konkretnom trenutku koji se koristi za klip.
     file_id = file_info["id"]
-    cached = hooks_cache.get(file_id)
+    if file_id in hooks_cache and hooks_cache[file_id].get("hooks"):
+        return hooks_cache[file_id]
 
-    needs_hooks = not cached or not cached.get("hooks")
-    needs_crop = not cached or "crop_left_x" not in cached or "crop_right_x" not in cached
-
-    if not needs_hooks and not needs_crop:
-        return cached
-
-    print(
-        f"Azuriram podatke za '{file_info['name']}' "
-        f"(hookovi: {'da' if needs_hooks else 'ne treba'}, secenje lica: {'da' if needs_crop else 'ne treba'})..."
-    )
+    print(f"Nema keširanih hookova za '{file_info['name']}', pravim transkripciju...")
     tmp_source = f"tmp_{file_id}.mp4"
+    tmp_audio = f"tmp_{file_id}.mp3"
     service = get_drive_service()
     download_by_id(service, file_id, tmp_source)
     duration = get_duration_seconds(tmp_source)
-
-    if needs_hooks:
-        tmp_audio = f"tmp_{file_id}.mp3"
-        extract_audio(tmp_source, tmp_audio, duration)
-        words = transcribe_audio(tmp_audio, openai_key)
-        hooks = find_hook_segments(words, anthropic_key, duration)
-        os.remove(tmp_audio)
-    else:
-        hooks = cached["hooks"]
-        duration = cached.get("duration", duration)
-
-    if needs_crop:
-        crop_left_x, crop_right_x = detect_crop_offsets(tmp_source, duration)
-    else:
-        crop_left_x, crop_right_x = cached["crop_left_x"], cached["crop_right_x"]
-
+    extract_audio(tmp_source, tmp_audio, duration)
+    words = transcribe_audio(tmp_audio, openai_key)
+    hooks = find_hook_segments(words, anthropic_key, duration)
     os.remove(tmp_source)
+    os.remove(tmp_audio)
 
-    hooks_cache[file_id] = {
-        "name": file_info["name"],
-        "duration": duration,
-        "hooks": hooks,
-        "crop_left_x": crop_left_x,
-        "crop_right_x": crop_right_x,
-    }
+    hooks_cache[file_id] = {"name": file_info["name"], "duration": duration, "hooks": hooks}
     save_json(HOOKS_CACHE_PATH, hooks_cache)
     return hooks_cache[file_id]
 
@@ -486,7 +484,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
-Style: Caption,Liberation Sans,74,&H00FFFFFF,&H00000000,&H00000000,1,0,1,6,0,2,60,60,480
+Style: Caption,Liberation Sans,74,&H00FFFFFF,&H00000000,&H00000000,1,0,1,6,0,2,60,60,750
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -647,8 +645,18 @@ def main():
         print(f"Pronadjeno {len(video_files)} video fajlova u folderu.")
 
         download_by_id(service, WATERMARK_FILE_ID, WATERMARK_PATH)
-        if BACKGROUND_AUDIO_FILE_ID:
-            download_by_id(service, BACKGROUND_AUDIO_FILE_ID, BACKGROUND_AUDIO_PATH)
+
+        # Preuzmi sve pozadinske numere (jednom, ostaju keširane za ovaj run),
+        # pa nasumicno izaberi jednu za OVAJ konkretan klip - malo raznovrsnosti
+        # kroz 10 objava dnevno.
+        background_audio_paths = []
+        for i, audio_file_id in enumerate(BACKGROUND_AUDIO_FILE_IDS):
+            path = f"background_audio_{i}.mp3"
+            download_by_id(service, audio_file_id, path)
+            background_audio_paths.append(path)
+        chosen_background_audio = random.choice(background_audio_paths) if background_audio_paths else None
+        if chosen_background_audio:
+            print(f"Izabrana pozadinska muzika: {chosen_background_audio}")
 
         openai_key = os.environ["OPENAI_API_KEY"]
         anthropic_key = os.environ["ANTHROPIC_API_KEY"]
@@ -679,12 +687,18 @@ def main():
         captions_path = "captions.ass"
         build_captions_file(words, hook["start"], hook["end"], captions_path)
 
+        # Pozicija secenja lica se racuna posebno za OVAJ konkretan isecak (ne
+        # prosek celog fajla), jer se ljudi pomeraju/gestikuliraju tokom snimka.
+        crop_left_x, crop_right_x = detect_crop_offsets(
+            source_path, file_meta["duration"], hook["start"], hook["end"]
+        )
+
         build_clip(
             source_path, WATERMARK_PATH, captions_path, OUTPUT_PATH,
             hook["start"], hook["end"] - hook["start"],
-            crop_left_x=file_meta.get("crop_left_x", DEFAULT_CROP_LEFT_X),
-            crop_right_x=file_meta.get("crop_right_x", DEFAULT_CROP_RIGHT_X),
-            background_audio_path=BACKGROUND_AUDIO_PATH if BACKGROUND_AUDIO_FILE_ID else None,
+            crop_left_x=crop_left_x,
+            crop_right_x=crop_right_x,
+            background_audio_path=chosen_background_audio,
         )
 
         cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"]
