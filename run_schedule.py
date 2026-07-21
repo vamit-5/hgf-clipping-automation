@@ -350,10 +350,15 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
 
 def ensure_hooks_for_file(file_info, hooks_cache, openai_key, anthropic_key):
     file_id = file_info["id"]
-    if file_id in hooks_cache and hooks_cache[file_id].get("hooks"):
-        return hooks_cache[file_id]
+    cached = hooks_cache.get(file_id)
+    cached_hooks = cached.get("hooks") if cached else None
+    # stari kes (pre "supercut" formata) nema "clips" kljuc u svakom hooku -
+    # takav kes je zastareo i mora se ponovo izracunati, ne moze se ponovo koristiti
+    is_current_format = bool(cached_hooks) and all("clips" in h for h in cached_hooks)
+    if cached and is_current_format:
+        return cached
 
-    print(f"Nema keširanih hookova za '{file_info['name']}', pravim transkripciju...")
+    print(f"Nema (ili je zastareo) kesiran hook podatak za '{file_info['name']}', pravim transkripciju/analizu...")
     tmp_source = f"tmp_{file_id}.mp4"
     tmp_audio = f"tmp_{file_id}.mp3"
     service = get_drive_service()
