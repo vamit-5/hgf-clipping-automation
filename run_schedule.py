@@ -725,15 +725,35 @@ def main():
         hooks_cache = load_json(HOOKS_CACHE_PATH, {})
         used_segments = load_json(USED_SEGMENTS_PATH, {})
 
+        # KLJUCNA PROMENA (ovo je bio pravi uzrok "run traje jako dugo, katanac
+        # ostaje svez, niko ne objavi nista"): ranije smo racunali hookove za
+        # SVE fajlove u folderu pre nego sto bismo uopste probali da objavimo
+        # bilo sta. Za svaki fajl bez keširanih hookova to znaci: preuzimanje
+        # celog videa + Whisper transkripcija CELE epizode + Claude analiza -
+        # to lako potraje vise minuta PO FAJLU. Ako folder ima vise epizoda bez
+        # keša (npr. posle reseta hooks_cache.json), ceo run bi trajao i preko
+        # sat vremena pre nego sto bi uopste stigao do objavljivanja, drzeci
+        # katanac "svez" sve to vreme dok drugi pokusaji korektno cekaju.
+        #
+        # Sada radimo fajl po fajl i cim nadjemo fajl koji ima slobodan
+        # (neiskoriscen) segment, ODMAH prekidamo petlju i idemo na
+        # objavljivanje. Preostali fajlovi ce dobiti hookove u nekom od
+        # sledecih pokretanja (kes se cuva posle SVAKOG fajla, tako da se
+        # napredak nikad ne gubi).
+        file_id, hook = None, None
         for f in video_files:
+            if f["id"] in EXCLUDED_FILE_IDS:
+                continue
             ensure_hooks_for_file(f, hooks_cache, openai_key, anthropic_key)
+            save_json(HOOKS_CACHE_PATH, hooks_cache)
 
-        # Sacuvaj sveze izracunate hookove ODMAH (pre provere da li ima sta da
-        # se objavi) - ovo je skup korak (preuzimanje + transkripcija +
-        # analiza), ne sme se izgubiti ako sledeca provera prekine izvrsavanje.
+            candidate_id, candidate_hook = pick_next_segment(used_segments, hooks_cache)
+            if candidate_hook:
+                file_id, hook = candidate_id, candidate_hook
+                break
+
         commit_and_push_state("chore: update hooks cache")
 
-        file_id, hook = pick_next_segment(used_segments, hooks_cache)
         if not hook:
             print("Svi dostupni hookovi iz svih epizoda su vec iskorisceni. Potrebna je nova epizoda u Drive folderu.")
             return
