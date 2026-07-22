@@ -5,9 +5,19 @@ import random
 import datetime
 import subprocess
 import requests
+import httplib2
 from google.oauth2 import service_account
+from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+
+# Podrazumevani timeout-i (u sekundama) za spoljne pozive/procese - bez ovoga,
+# mrezni poziv ili ffmpeg koji se "zaglavi" moze da visi zauvek umesto da javi
+# gresku (video nam se tacno to desilo - run je "In progress" preko sat vremena).
+DRIVE_HTTP_TIMEOUT = 180
+GIT_TIMEOUT = 120
+FFMPEG_TIMEOUT = 600
+FFPROBE_TIMEOUT = 60
 
 FOLDER_ID = "1nrmfGxqCNLH0RdIgzGOV6v_O0aEfcxRb"
 WATERMARK_FILE_ID = "1a3FqXNdhtW-QdFq_ww7G_bwdIAUg-7fh"
@@ -45,7 +55,7 @@ DAILY_TARGET = 10
 ALLOWED_UTC_HOURS = set(range(12, 23))  # 12:00 - 22:59 UTC
 LOCK_FRESHNESS_MINUTES = 25
 
-CAPTION_TEXT = (
+DEFAULT_CAPTION_TEXT = (
     "@hgf Real talk you need to hear today. Follow @hgf and listen to the "
     "full episode — link in bio. #HotGirlFinance #MoneyTips #FinanceTok"
 )
@@ -79,7 +89,11 @@ def retry_request(func, description):
 # ---------- git helpers ----------
 
 def git_run(cmd):
-    return subprocess.run(["git"] + cmd, capture_output=True, text=True)
+    try:
+        return subprocess.run(["git"] + cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired as e:
+        print(f"GIT KOMANDA ZAGLAVLJENA (>{GIT_TIMEOUT}s): git {' '.join(cmd)}")
+        raise RuntimeError(f"git {' '.join(cmd)} nije zavrsio u {GIT_TIMEOUT}s.") from e
 
 
 def git_pull_latest():
@@ -161,7 +175,11 @@ def get_today_key():
 def get_drive_service():
     creds_info = json.loads(os.environ["GDRIVE_CREDENTIALS_JSON"])
     credentials = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-    return build("drive", "v3", credentials=credentials)
+    # httplib2 nema podrazumevani timeout - bez ovoga, jedan zaglavljen mrezni
+    # poziv ka Google Drive-u moze da visi zauvek umesto da javi gresku.
+    http = httplib2.Http(timeout=DRIVE_HTTP_TIMEOUT)
+    authorized_http = AuthorizedHttp(credentials, http=http)
+    return build("drive", "v3", http=authorized_http, cache_discovery=False)
 
 
 def list_video_files(service, folder_id):
@@ -207,7 +225,10 @@ def download_by_id(service, file_id, destination):
 
 def get_duration_seconds(path):
     cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", path]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=FFPROBE_TIMEOUT)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"ffprobe se zaglavio (>{FFPROBE_TIMEOUT}s) na fajlu {path}.") from e
     data = json.loads(result.stdout)
     return float(data["format"]["duration"])
 
@@ -218,7 +239,10 @@ def extract_audio(source_path, audio_path, duration_seconds):
     target_bitrate = max(24, min(64, int((23 * 8 * 1024) / duration_seconds)))
     print(f"Izdvajam audio pri {target_bitrate}kbps...")
     cmd = ["ffmpeg", "-y", "-i", source_path, "-vn", "-ac", "1", "-b:a", f"{target_bitrate}k", audio_path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"Izdvajanje audia se zaglavilo (>{FFMPEG_TIMEOUT}s).") from e
     if result.returncode != 0:
         print(result.stderr[-3000:])
         raise RuntimeError("Izdvajanje audia nije uspelo.")
@@ -293,9 +317,15 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
         "grade utisak/tenziju/payoff kada se puste jedna za drugom bez prekida.\n"
         "- Razliciti supercut klipovi (od ovih {n} koje pravis) ne smeju da koriste iste izjave.\n"
         f"Video traje ukupno {total_duration:.0f}s.\n\n"
+        "Za svaki supercut klip napravi i JEDINSTVEN Instagram caption (na engleskom, kratak - "
+        "1-2 recenice) koji se konkretno odnosi na TAJ sadrzaj (ne generican tekst koji bi mogao "
+        "da stoji ispod bilo kog videa). Caption MORA da sadrzi: pomen '@hgf', poziv da se prati "
+        "@hgf i posluša cela epizoda ('link in bio'), i 3-5 relevantnih hashtag-ova (ukljucujuci "
+        "#HotGirlFinance). Ne ponavljaj isti caption izmedju razlicitih klipova.\n\n"
         "Odgovori ISKLJUCIVO validnim JSON nizom, bez ikakvog dodatnog teksta, u ovom obliku:\n"
         '[{"clips": [{"start": <broj>, "end": <broj>}, ...], '
-        '"reason": "<kratko objasnjenje na srpskom>"}, ...]'
+        '"reason": "<kratko objasnjenje na srpskom>", '
+        '"caption": "<Instagram caption na engleskom>"}, ...]'
     ).replace("{n}", str(n_hooks))
 
     url = "https://api.anthropic.com/v1/messages"
@@ -360,7 +390,13 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
                 break
             trimmed.append([s, e])
             total += length
-        cleaned.append({"clips": trimmed, "reason": h.get("reason", "")})
+
+        caption = h.get("caption", "")
+        if not isinstance(caption, str) or "@hgf" not in caption.lower() or len(caption.strip()) < 10:
+            # fallback ako AI ne vrati ispravan caption - i dalje moramo imati nesto validno
+            caption = DEFAULT_CAPTION_TEXT
+
+        cleaned.append({"clips": trimmed, "reason": h.get("reason", ""), "caption": caption.strip()})
 
     print(f"Pronadjeno {len(cleaned)} supercut kombinacija (svaka od po nekoliko izjava).")
     return cleaned
@@ -495,7 +531,10 @@ def build_supercut(source_path, clips, output_path):
         output_path,
     ]
     print(f"Spajam {n} kratkih izjava u jedan supercut...")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"Spajanje izjava se zaglavilo (>{FFMPEG_TIMEOUT}s).") from e
     if result.returncode != 0:
         print("FFMPEG GRESKA (spajanje izjava):")
         print(result.stderr[-3000:])
@@ -546,7 +585,10 @@ def finalize_clip(input_path, watermark_path, captions_path, output_path, backgr
     ]
     print(f"Zavrsna obrada (16:9 sa blur pozadinom, watermark, titlovi"
           f"{', pozadinska muzika' if has_bg_audio else ''})...")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"Zavrsna obrada se zaglavila (>{FFMPEG_TIMEOUT}s).") from e
     if result.returncode != 0:
         print("FFMPEG GRESKA:")
         print(result.stderr[-3000:])
@@ -715,7 +757,9 @@ def main():
         ig_user_id = os.environ["IG_USER_ID"]
         access_token = os.environ["IG_ACCESS_TOKEN"]
 
-        creation_id = create_ig_container(ig_user_id, access_token, video_url, CAPTION_TEXT)
+        post_caption = hook.get("caption") or DEFAULT_CAPTION_TEXT
+        print(f"Caption za ovu objavu: {post_caption}")
+        creation_id = create_ig_container(ig_user_id, access_token, video_url, post_caption)
         wait_until_ready(creation_id, access_token)
         media_id = publish_container(ig_user_id, access_token, creation_id)
         print(f"OBJAVLJENO! Media ID: {media_id}")
