@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import random
+import signal
 import datetime
 import subprocess
 import requests
@@ -21,6 +22,29 @@ from googleapiclient.http import MediaIoBaseDownload
 # skrivalo pravi uzrok svih "run visi, log prazan" slucajeva. Ova linija to
 # resava - svaka print() poruka se odmah ispisuje.
 sys.stdout.reconfigure(line_buffering=True)
+
+# KRITICNO #2: otkrili smo (posle mnogo pokusaja) da GitHub Actions runner
+# povremeno ubija ceo proces spolja sa SIGTERM (exit code 143), bez ikakve
+# greske u nasem kodu - resursi (RAM/disk) su potvrdjeno u redu u tim
+# trenucima, dakle uzrok je van naseg koda. Problem: kada spolja stigne
+# SIGTERM, Python-ov "except Exception" blok u main() NIKAD se ne izvrsi
+# (SIGTERM ne postaje Python izuzetak vec odmah prekida proces), pa
+# release_lock_after_failure() nikad nije pozvan - zbog toga je katanac
+# ostajao "svez" celih 25 minuta posle SVAKOG ovakvog spoljnog ubijanja,
+# iako smo mislili da je release-on-failure vec resio to. Ovaj handler to
+# ispravlja: hvata SIGTERM/SIGINT eksplicitno i odmah oslobadja katanac
+# pre nego sto proces zaista umre.
+def _handle_external_shutdown(signum, frame):
+    print(f"Primljen signal {signum} (neko/nesto spolja gasi proces) - odmah oslobadjam katanac...")
+    try:
+        release_lock_after_failure()
+    except Exception as e:
+        print(f"Nisam uspeo da oslobodim katanac u signal handleru (nije kriticno): {e}")
+    sys.exit(143)
+
+
+signal.signal(signal.SIGTERM, _handle_external_shutdown)
+signal.signal(signal.SIGINT, _handle_external_shutdown)
 
 # Podrazumevani timeout-i (u sekundama) za spoljne pozive/procese - bez ovoga,
 # mrezni poziv ili ffmpeg koji se "zaglavi" moze da visi zauvek umesto da javi
@@ -465,7 +489,12 @@ def ensure_hooks_for_file(file_info, hooks_cache, openai_key, anthropic_key):
     extract_audio(tmp_source, tmp_audio, duration)
     words = transcribe_audio(tmp_audio, openai_key)
     hooks = find_hook_segments(words, anthropic_key, duration)
-    os.remove(tmp_source)
+    # NAPOMENA: namerno NE brisemo tmp_source ovde (samo audio). Ako se ovaj
+    # fajl ispostavi kao onaj koji cemo odmah iskoristiti za supercut, main()
+    # ce ga ponovo iskoristiti sa diska umesto da ga preuzima DRUGI PUT -
+    # ranije smo isti fajl preuzimali dvaput zaredom (jednom ovde radi
+    # transkripcije, pa odmah posle toga opet radi pravljenja klipa), sto je
+    # bespotrebno udvostrucavalo vreme/IO svakog run-a.
     os.remove(tmp_audio)
 
     hooks_cache[file_id] = {"name": file_info["name"], "duration": duration, "hooks": hooks}
@@ -796,7 +825,12 @@ def main():
         )
 
         source_path = f"tmp_{file_id}.mp4"
-        download_by_id(service, file_id, source_path)
+        if os.path.exists(source_path):
+            # vec preuzet malopre unutar ensure_hooks_for_file() za ovaj isti
+            # fajl - ne preuzimaj ga opet, to samo udvostrucuje vreme/IO
+            print(f"'{file_meta['name']}' je vec preuzet malopre, ne preuzimam ponovo.")
+        else:
+            download_by_id(service, file_id, source_path)
         print_resource_usage("posle preuzimanja izvornog videa")
 
         supercut_path = f"tmp_{file_id}_supercut.mp4"
@@ -854,3 +888,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    fix lock release
