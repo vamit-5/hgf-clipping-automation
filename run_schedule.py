@@ -651,6 +651,11 @@ def main():
         for f in video_files:
             ensure_hooks_for_file(f, hooks_cache, openai_key, anthropic_key)
 
+        # Sacuvaj sveze izracunate hookove ODMAH (pre provere da li ima sta da
+        # se objavi) - ovo je skup korak (preuzimanje + transkripcija +
+        # analiza), ne sme se izgubiti ako sledeca provera prekine izvrsavanje.
+        commit_and_push_state("chore: update hooks cache")
+
         file_id, hook = pick_next_segment(used_segments, hooks_cache)
         if not hook:
             print("Svi dostupni hookovi iz svih epizoda su vec iskorisceni. Potrebna je nova epizoda u Drive folderu.")
