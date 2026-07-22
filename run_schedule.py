@@ -15,6 +15,7 @@ WATERMARK_FILE_ID = "1a3FqXNdhtW-QdFq_ww7G_bwdIAUg-7fh"
 # nisu "sirovi" materijal pogodan za nasu automatsku obradu).
 EXCLUDED_FILE_IDS = {
     "1aR6bpmKwxWB3HySpcBVZcmeIrKOmrEzs",
+    "1OW3tmwxgA1iouG3bVRnmE9soNkwGOprN",  # duplikat drugog vec koriscenog podkasta
 }
 # Google Drive FILE ID-jevi pozadinske (dramaticne) muzike, bez copyright-a.
 # Za svaki objavljeni klip se nasumicno bira JEDNA od ovih numera (radi
@@ -38,9 +39,10 @@ OUTPUT_PATH = "clip_output.mp4"
 MIN_CLIP_SECONDS = 28
 MAX_CLIP_SECONDS = 48
 MAX_SINGLE_CLIP_SECONDS = 18  # jedna pojedinacna izjava u supercutu ne sme biti duza od ovoga
+MIN_CLIP_START_SECONDS = 55  # ne diraj prvih ~55s (vec editovan uvod vlasnika sa muzikom/intro)
 HOOKS_PER_FILE = 8
 DAILY_TARGET = 10
-ALLOWED_UTC_HOURS = set(range(0, 24))  # PRIVREMENO OTVORENO 24/7 - SAMO ZA TEST, VRATI POSLE NA range(12, 23)
+ALLOWED_UTC_HOURS = set(range(12, 23))  # 12:00 - 22:59 UTC
 LOCK_FRESHNESS_MINUTES = 25
 
 CAPTION_TEXT = (
@@ -250,14 +252,18 @@ def snap_time_to_words(target, words, key):
 
 
 def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
-    lines = [f"[{w['start']:.1f}] {w['word']}" for w in words]
+    # ne saljemo Claude-u uopste prvih MIN_CLIP_START_SECONDS - to je vec
+    # editovan uvod vlasnika (sa muzikom/najavom) i ne sme se dirati/koristiti
+    lines = [f"[{w['start']:.1f}] {w['word']}" for w in words if w["start"] >= MIN_CLIP_START_SECONDS]
     transcript_text = " ".join(lines)
     if len(transcript_text) > 60000:
         transcript_text = transcript_text[:60000]
 
     prompt = (
         "Ovo je transkript epizode podkasta o licnim finansijama, sa vremenskim oznakama "
-        "u sekundama pre svake reci (format [12.3] rec).\n\n"
+        "u sekundama pre svake reci (format [12.3] rec). Transkript POCINJE tek nakon uvodnog "
+        f"dela epizode (prvih {MIN_CLIP_START_SECONDS}s je vec izbaceno) - ne treba dodatno da "
+        "brines o tome.\n\n"
         f"{transcript_text}\n\n"
         f"Napravi {n_hooks} RAZLICITIH kratkih 'supercut' klipova za drustvene mreze. Svaki "
         "supercut klip je SASTAVLJEN OD VISE KRATKIH, POJEDINACNIH izjava (recenica ili delova "
@@ -267,11 +273,19 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
         "'dosadnog' konteksta izmedju njih. Gledalac mora da bude sokiran/zapanjen/emotivno "
         "pogodjen u SVAKOJ pojedinacnoj izjavi, ne samo na pocetku - izbegavaj blage, informativne "
         "ili neutralne recenice.\n\n"
+        "PRVA izjava u svakom supercut klipu (hook) mora biti TRENUTNO jasna o cemu se radi, kao "
+        "naslov clanka - npr. 'najveca greska koju zene prave sa parama', 'najveca greska u "
+        "investiranju koju ljudi prave', ili neka kontroverzna/diskutabilna izjava o odnosima "
+        "muskaraca i zena i novca. Gledalac mora u prve 2 sekunde da zna TACNO o cemu je rec i "
+        "zasto bi trebalo da gleda dalje.\n\n"
         "Pravila:\n"
         "- Svaka pojedinacna izjava (clip) treba da traje otprilike 4-15 sekundi i MORA poceti "
         "TACNO na pocetku te recenice/izjave (ne usred reci, ne usred nepovezane misli pre nje) i "
         "zavrsiti tacno na kraju te izjave (ne usred sledece recenice).\n"
         "- Kombinuj 3-6 ovakvih pojedinacnih izjava u JEDAN supercut klip.\n"
+        "- PONEKAD (ne uvek, samo kad ima smisla) iskoristi PAR pitanje-odgovor: kratko pitanje "
+        "voditelja odmah propraceno sokantnim odgovorom sagovornika, kao dve uzastopne izjave u "
+        "istom supercutu - to pojacava efekat. Ne mora svaki supercut da ima ovakav par.\n"
         "- Ukupno trajanje svih izjava sabrano u jednom supercut klipu treba da bude izmedju "
         f"{MIN_CLIP_SECONDS} i {MAX_CLIP_SECONDS} sekundi.\n"
         "- Izjave unutar jednog supercut klipa NE moraju biti hronoloski uzastopne u originalnom "
@@ -317,6 +331,10 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=HOOKS_PER_FILE):
                 start = max(0.0, float(c["start"]))
                 end = min(float(c["end"]), total_duration)
             except (KeyError, TypeError, ValueError):
+                continue
+            # tvrda zastita (ne samo AI uputstvo) - nikad ne diraj vec editovan
+            # uvod vlasnika, bez obzira sta AI vrati
+            if start < MIN_CLIP_START_SECONDS:
                 continue
             if end - start < 1.0:
                 continue
