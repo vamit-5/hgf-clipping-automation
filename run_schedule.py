@@ -858,12 +858,40 @@ def main():
         ig_user_id = os.environ["IG_USER_ID"]
         access_token = os.environ["IG_ACCESS_TOKEN"]
 
+        # DIJAGNOSTIKA: kod misli da uspesno objavljuje (dobija media_id nazad
+        # od Instagrama), ali korisnik na @richgirl_mind profilu ne vidi rast broja
+        # objava - proveravamo TACNO na koji username se objavljuje, da odmah
+        # vidimo da li je to zaista @richgirl_mind ili neki drugi/test nalog.
+        try:
+            whoami = requests.get(
+                f"https://graph.instagram.com/v23.0/{ig_user_id}",
+                params={"fields": "username,account_type", "access_token": access_token},
+                timeout=30,
+            )
+            print(f"Objavljujem na Instagram nalog: {whoami.json()}")
+        except Exception as e:
+            print(f"Nisam uspeo da proverim na koji IG nalog objavljujem (nastavljam ipak): {e}")
+
         post_caption = hook.get("caption") or DEFAULT_CAPTION_TEXT
         print(f"Caption za ovu objavu: {post_caption}")
         creation_id = create_ig_container(ig_user_id, access_token, video_url, post_caption)
         wait_until_ready(creation_id, access_token)
         media_id = publish_container(ig_user_id, access_token, creation_id)
         print(f"OBJAVLJENO! Media ID: {media_id}")
+
+        # DIJAGNOSTIKA #2: korisnik vidi da broj objava na @richgirl_mind ne raste
+        # iako kod misli da je uspesno objavio 11 puta - proveravamo da li objava
+        # SA TIM media_id STVARNO postoji i javno je vidljiva (permalink), umesto
+        # da samo verujemo da je "success" odgovor od Instagrama = zaista objavljeno.
+        try:
+            verify = requests.get(
+                f"https://graph.instagram.com/v23.0/{media_id}",
+                params={"fields": "permalink,media_type,timestamp", "access_token": access_token},
+                timeout=30,
+            )
+            print(f"Provera objave posle publish-a: {verify.json()}")
+        except Exception as e:
+            print(f"Nisam uspeo da proverim objavu posle publish-a (nije kriticno): {e}")
 
         delete_from_cloudinary(
             public_id, cloud_name,
