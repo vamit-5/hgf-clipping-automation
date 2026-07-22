@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import random
@@ -10,6 +11,16 @@ from google.oauth2 import service_account
 from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+
+# KRITICNO: kad Python ne radi u terminalu (kao u GitHub Actions), stdout je
+# "block-buffered" - sve print() poruke se gomilaju u memoriji i ispisuju tek
+# kad se bafer napuni ili proces normalno zavrsi. Ako neko spolja ubije proces
+# (SIGTERM/exit 143), taj bafer se NIKAD ne isprazni - sve poruke koje smo
+# trebali da vidimo u logu su zauvek izgubljene, i izgleda kao da se kod
+# zaglavio odmah na pocetku iako je mozda odmakao mnogo dalje. Ovo je do sada
+# skrivalo pravi uzrok svih "run visi, log prazan" slucajeva. Ova linija to
+# resava - svaka print() poruka se odmah ispisuje.
+sys.stdout.reconfigure(line_buffering=True)
 
 # Podrazumevani timeout-i (u sekundama) za spoljne pozive/procese - bez ovoga,
 # mrezni poziv ili ffmpeg koji se "zaglavi" moze da visi zauvek umesto da javi
