@@ -127,6 +127,23 @@ def try_claim_lock():
     return False
 
 
+def release_lock_after_failure():
+    """Kada run legitimno padne sa greskom, oslobodi katanac ODMAH umesto da
+    ceka puni LOCK_FRESHNESS_MINUTES prozor - inace svaki neuspeh nepotrebno
+    blokira sledeci pokusaj na 25 minuta."""
+    try:
+        if os.path.exists(LOCK_PATH):
+            os.remove(LOCK_PATH)
+        git_run(["add", LOCK_PATH])
+        commit_result = git_run(["commit", "-m", "chore: release lock after failure"])
+        if commit_result.returncode != 0 and "nothing to commit" in (commit_result.stdout + commit_result.stderr):
+            return
+        git_run(["push", "origin", "HEAD"])
+        print("Katanac oslobodjen posle greske (sledeci pokusaj ne mora da ceka 25 min).")
+    except Exception as e:
+        print(f"Nisam uspeo da oslobodim katanac posle greske (nije kriticno, istice sam): {e}")
+
+
 def commit_and_push_state(message):
     git_run(["add", STATE_DIR])
     commit_result = git_run(["commit", "-m", message])
@@ -781,6 +798,7 @@ def main():
 
     except Exception as e:
         print(f"GRESKA tokom izvrsavanja: {e}")
+        release_lock_after_failure()
         raise
 
 
