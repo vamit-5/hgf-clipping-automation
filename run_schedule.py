@@ -75,6 +75,22 @@ RETRY_ATTEMPTS = 5
 RETRY_DELAYS = [5, 10, 20, 40]
 
 
+def print_resource_usage(label):
+    """Ispisuje trenutno slobodnu RAM i disk memoriju na GitHub Actions
+    runneru. Runner proces je nekoliko puta ubijen spolja (exit 143) bas u
+    trenutku teskih ffmpeg operacija, bez ikakve greske iz naseg koda - ovo
+    ce potvrditi (ili odbaciti) da je uzrok nestanak RAM-a/diska na runneru."""
+    try:
+        mem = subprocess.run(["free", "-h"], capture_output=True, text=True, timeout=10)
+        disk = subprocess.run(["df", "-h", "."], capture_output=True, text=True, timeout=10)
+        print(f"--- Resursi runnera ({label}) ---")
+        print(mem.stdout.strip())
+        print(disk.stdout.strip())
+        print("--- kraj resursa ---")
+    except Exception as e:
+        print(f"Nisam uspeo da ocitam resurse runnera (nije kriticno): {e}")
+
+
 def retry_request(func, description):
     last_error = None
     for attempt in range(1, RETRY_ATTEMPTS + 1):
@@ -559,6 +575,7 @@ def build_supercut(source_path, clips, output_path):
         output_path,
     ]
     print(f"Spajam {n} kratkih izjava u jedan supercut...")
+    print_resource_usage("pre spajanja supercuta")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
     except subprocess.TimeoutExpired as e:
@@ -613,6 +630,7 @@ def finalize_clip(input_path, watermark_path, captions_path, output_path, backgr
     ]
     print(f"Zavrsna obrada (16:9 sa blur pozadinom, watermark, titlovi"
           f"{', pozadinska muzika' if has_bg_audio else ''})...")
+    print_resource_usage("pre zavrsne obrade")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
     except subprocess.TimeoutExpired as e:
@@ -779,6 +797,7 @@ def main():
 
         source_path = f"tmp_{file_id}.mp4"
         download_by_id(service, file_id, source_path)
+        print_resource_usage("posle preuzimanja izvornog videa")
 
         supercut_path = f"tmp_{file_id}_supercut.mp4"
         build_supercut(source_path, clips, supercut_path)
