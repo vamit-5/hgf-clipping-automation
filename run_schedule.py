@@ -598,7 +598,7 @@ def build_supercut(source_path, clips, output_path):
         "-i", source_path,
         "-filter_complex", filter_complex,
         "-map", "[vcat]", "-map", "[acat]",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "2",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         output_path,
@@ -652,7 +652,7 @@ def finalize_clip(input_path, watermark_path, captions_path, output_path, backgr
     cmd += [
         "-filter_complex", filter_complex,
         "-map", "[outv]", *audio_map,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", "2",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
         output_path,
