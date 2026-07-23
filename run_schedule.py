@@ -87,7 +87,7 @@ MAX_SINGLE_CLIP_SECONDS = 18  # jedna pojedinacna izjava u supercutu ne sme biti
 MIN_CLIP_START_SECONDS = 55  # ne diraj prvih ~55s (vec editovan uvod vlasnika sa muzikom/intro)
 HOOKS_PER_FILE = 8
 DAILY_TARGET = 10
-ALLOWED_UTC_HOURS = set(range(12, 23))  # 12:00 - 22:59 UTC
+ALLOWED_UTC_HOURS = set(range(0, 24))  # PRIVREMENO prosireno na ceo dan radi test objave - VRATI na (12, 23)
 LOCK_FRESHNESS_MINUTES = 25
 
 DEFAULT_CAPTION_TEXT = (
