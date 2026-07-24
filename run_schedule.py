@@ -327,7 +327,19 @@ def download_by_id(service, file_id, destination):
             # obrisemo - potpuno transparentno za ostatak koda.
             print(f"Dnevni limit preuzimanja za fajl {file_id} je potrosen -> pravim privremenu kopiju na Drive-u da zaobidjem limit...")
             copy_meta = _execute_with_retry(
-                service.files().copy(fileId=file_id, fields="id", supportsAllDrives=True),
+                service.files().copy(
+                    fileId=file_id,
+                    fields="id",
+                    supportsAllDrives=True,
+                    # KRITICNO: servisni nalog (robot) NEMA sopstveni Drive
+                    # prostor (0 GB licnog prostora) - ako se ne navede parent,
+                    # Google pokusava da sacuva kopiju u NJEGOV licni prostor i
+                    # odmah puca "Service Accounts do not have storage quota".
+                    # Zato eksplicitno stavljamo kopiju u ISTI folder gde je i
+                    # original (deljeni folder ima svoj prostor, nezavisan od
+                    # servisnog naloga).
+                    body={"parents": [FOLDER_ID]},
+                ),
                 "Drive kopiranje fajla",
             )
             copy_id = copy_meta["id"]
