@@ -311,8 +311,8 @@ def download_by_id(service, file_id, destination):
                 print("Preuzimanje preko privremene kopije uspelo.")
             finally:
                 try:
-                service.files().delete(fileId=copy_id, supportsAllDrives=True).execute()
-                print("Privremena kopija na Drive-u obrisana.")
+                    service.files().delete(fileId=copy_id, supportsAllDrives=True).execute()
+                    print("Privremena kopija na Drive-u obrisana.")
                 except Exception as cleanup_err:
                     print(f"Nisam uspeo da obrisem privremenu kopiju (nije kriticno): {cleanup_err}")
         else:
