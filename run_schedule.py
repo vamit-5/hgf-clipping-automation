@@ -304,15 +304,15 @@ def download_by_id(service, file_id, destination):
             # kopija dobija SVOJ, svez limit), preuzmemo sa nje, pa je odmah
             # obrisemo - potpuno transparentno za ostatak koda.
             print(f"Dnevni limit preuzimanja za fajl {file_id} je potrosen -> pravim privremenu kopiju na Drive-u da zaobidjem limit...")
-            copy_meta = service.files().copy(fileId=file_id, fields="id").execute()
+            copy_meta = service.files().copy(fileId=file_id, fields="id", supportsAllDrives=True).execute()
             copy_id = copy_meta["id"]
             try:
                 _stream_download(service, copy_id, destination)
                 print("Preuzimanje preko privremene kopije uspelo.")
             finally:
                 try:
-                    service.files().delete(fileId=copy_id).execute()
-                    print("Privremena kopija na Drive-u obrisana.")
+                service.files().delete(fileId=copy_id, supportsAllDrives=True).execute()
+                print("Privremena kopija na Drive-u obrisana.")
                 except Exception as cleanup_err:
                     print(f"Nisam uspeo da obrisem privremenu kopiju (nije kriticno): {cleanup_err}")
         else:
