@@ -288,6 +288,28 @@ def _stream_download(service, file_id, destination):
     os.rename(tmp_destination, destination)
 
 
+def _execute_with_retry(request, description, max_attempts=6):
+    """Google Drive API vraca 403 'rateLimitExceeded'/'userRateLimitExceeded' kada
+    stigne PREVISE poziva u kratkom vremenskom periodu (ovo je RAZLICITO od dnevnog
+    limita preuzimanja po fajlu) - ova greska je PRIVREMENA i sama prolazi ako
+    sacekamo par sekundi i pokusamo ponovo (eksponencijalno produzavanje pauze,
+    kako Google zvanicno preporucuje)."""
+    delay = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return request.execute()
+        except HttpError as e:
+            status = getattr(e, "resp", None).status if getattr(e, "resp", None) is not None else None
+            reason = str(e)
+            is_rate_limit = status == 403 and ("rateLimitExceeded" in reason or "userRateLimitExceeded" in reason)
+            if is_rate_limit and attempt < max_attempts:
+                print(f"[{description}] Google Drive privremeni rate limit (pokusaj {attempt}/{max_attempts}), cekam {delay}s...")
+                time.sleep(delay)
+                delay = min(delay * 2, 60)
+                continue
+            raise
+
+
 def download_by_id(service, file_id, destination):
     if os.path.exists(destination):
         print(f"{destination} vec postoji, preskacem preuzimanje.")
@@ -304,14 +326,20 @@ def download_by_id(service, file_id, destination):
             # kopija dobija SVOJ, svez limit), preuzmemo sa nje, pa je odmah
             # obrisemo - potpuno transparentno za ostatak koda.
             print(f"Dnevni limit preuzimanja za fajl {file_id} je potrosen -> pravim privremenu kopiju na Drive-u da zaobidjem limit...")
-            copy_meta = service.files().copy(fileId=file_id, fields="id", supportsAllDrives=True).execute()
+            copy_meta = _execute_with_retry(
+                service.files().copy(fileId=file_id, fields="id", supportsAllDrives=True),
+                "Drive kopiranje fajla",
+            )
             copy_id = copy_meta["id"]
             try:
                 _stream_download(service, copy_id, destination)
                 print("Preuzimanje preko privremene kopije uspelo.")
             finally:
                 try:
-                    service.files().delete(fileId=copy_id, supportsAllDrives=True).execute()
+                    _execute_with_retry(
+                        service.files().delete(fileId=copy_id, supportsAllDrives=True),
+                        "Drive brisanje privremene kopije",
+                    )
                     print("Privremena kopija na Drive-u obrisana.")
                 except Exception as cleanup_err:
                     print(f"Nisam uspeo da obrisem privremenu kopiju (nije kriticno): {cleanup_err}")
