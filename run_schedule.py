@@ -857,7 +857,17 @@ def main():
         for f in video_files:
             if f["id"] in EXCLUDED_FILE_IDS:
                 continue
-            ensure_hooks_for_file(f, hooks_cache, openai_key, anthropic_key)
+            try:
+                ensure_hooks_for_file(f, hooks_cache, openai_key, anthropic_key)
+            except HttpError as e:
+                # Google Drive je trenutno "ljut" bas na OVAJ fajl (dnevni limit
+                # preuzimanja i/ili opsti rate limit su iscrpljeni, obicno zbog
+                # intenzivnog testiranja istog dana) - umesto da CEO run padne
+                # zbog jednog trenutno nedostupnog fajla, preskacemo ga i
+                # probamo sledeci u folderu. Ovaj fajl ce ponovo biti dostupan
+                # cim se njegov Drive limit sam obnovi (obicno za par sati).
+                print(f"Fajl '{f['name']}' trenutno nije dostupan na Drive-u (limit/rate limit) -> preskacem ga za ovaj run: {e}")
+                continue
             save_json(HOOKS_CACHE_PATH, hooks_cache)
 
             candidate_id, candidate_hook = pick_next_segment(used_segments, hooks_cache)
