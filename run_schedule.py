@@ -907,7 +907,18 @@ def main():
             # fajl - ne preuzimaj ga opet, to samo udvostrucuje vreme/IO
             print(f"'{file_meta['name']}' je vec preuzet malopre, ne preuzimam ponovo.")
         else:
-            download_by_id(service, file_id, source_path)
+            try:
+                download_by_id(service, file_id, source_path)
+            except HttpError as e:
+                # Fajl je bio dostupan kad smo mu ranije citali hookove (mozda u
+                # nekom proslom pokretanju), ali BAS SADA Drive odbija da ga da
+                # (dnevni limit, rate limit, ili dozvole za privremenu kopiju) -
+                # umesto da CEO run padne, mirno odustajemo od ovog kruga i
+                # pustamo sledece automatsko pokretanje (za 20 min) da pokusa
+                # ponovo, kad ce situacija na Drive-u vrlo verovatno biti u redu.
+                print(f"Ne mogu trenutno da preuzmem '{file_meta['name']}' sa Drive-a -> odustajem od ovog kruga, probacu ponovo sledeci put: {e}")
+                release_lock_after_failure()
+                return
         print_resource_usage("posle preuzimanja izvornog videa")
 
         supercut_path = f"tmp_{file_id}_supercut.mp4"
