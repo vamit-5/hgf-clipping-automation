@@ -34,6 +34,8 @@ jobs:
 
       - name: Run scheduled posting check
         env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
           GDRIVE_CREDENTIALS_JSON: ${{ secrets.GDRIVE_CREDENTIALS_JSON }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
