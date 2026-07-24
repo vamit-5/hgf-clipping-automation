@@ -12,6 +12,7 @@ from google.oauth2 import service_account
 from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.errors import HttpError
 
 # KRITICNO: kad Python ne radi u terminalu (kao u GitHub Actions), stdout je
 # "block-buffered" - sve print() poruke se gomilaju u memoriji i ispisuju tek
@@ -70,8 +71,7 @@ BACKGROUND_AUDIO_FILE_IDS = [
     "1ANHCMAKisUvpxR8KYp0zRnkmKzblj8PN",
 ]
 BACKGROUND_AUDIO_VOLUME = 0.35  # glasnije, dramaticnije - ali i dalje ne prekriva govor
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
-
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 STATE_DIR = "state"
 USED_SEGMENTS_PATH = f"{STATE_DIR}/used_segments.json"
 DAILY_COUNTER_PATH = f"{STATE_DIR}/daily_counter.json"
@@ -272,10 +272,7 @@ def list_video_files(service, folder_id):
     return unique_videos
 
 
-def download_by_id(service, file_id, destination):
-    if os.path.exists(destination):
-        print(f"{destination} vec postoji, preskacem preuzimanje.")
-        return
+def _stream_download(service, file_id, destination):
     tmp_destination = destination + ".partial"
     request = service.files().get_media(fileId=file_id)
     with open(tmp_destination, "wb") as fh:
@@ -290,6 +287,36 @@ def download_by_id(service, file_id, destination):
                 print(f"Preuzeto: {int(status.progress() * 100)}%")
     os.rename(tmp_destination, destination)
 
+
+def download_by_id(service, file_id, destination):
+    if os.path.exists(destination):
+        print(f"{destination} vec postoji, preskacem preuzimanje.")
+        return
+    try:
+        _stream_download(service, file_id, destination)
+    except HttpError as e:
+        reason = str(e)
+        if getattr(e, "resp", None) is not None and e.resp.status == 403 and "downloadQuota" in reason:
+            # Google Drive ima DNEVNI limit preuzimanja PO FAJLU (ne po nalogu) -
+            # posto isti izvorni video preuzimamo desetine puta dnevno (jednom za
+            # transkripciju, pa opet za pravljenje klipa), taj limit se lako
+            # potrosi. Resenje: napravimo PRIVREMENU kopiju fajla na Drive-u (nova
+            # kopija dobija SVOJ, svez limit), preuzmemo sa nje, pa je odmah
+            # obrisemo - potpuno transparentno za ostatak koda.
+            print(f"Dnevni limit preuzimanja za fajl {file_id} je potrosen -> pravim privremenu kopiju na Drive-u da zaobidjem limit...")
+            copy_meta = service.files().copy(fileId=file_id, fields="id").execute()
+            copy_id = copy_meta["id"]
+            try:
+                _stream_download(service, copy_id, destination)
+                print("Preuzimanje preko privremene kopije uspelo.")
+            finally:
+                try:
+                    service.files().delete(fileId=copy_id).execute()
+                    print("Privremena kopija na Drive-u obrisana.")
+                except Exception as cleanup_err:
+                    print(f"Nisam uspeo da obrisem privremenu kopiju (nije kriticno): {cleanup_err}")
+        else:
+            raise
 
 def get_duration_seconds(path):
     cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", path]
