@@ -1,0 +1,39 @@
+name: Trailblazers Ann Miura-Ko - NOVI reel (ostar 9:16, muzika, tranzicije)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-new-reel:
+    runs-on: self-hosted
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Python
+        run: python --version
+
+      - name: Install ffmpeg
+        run: ffmpeg -version
+
+      - name: Install Python deps
+        run: pip install requests google-auth google-auth-httplib2 google-api-python-client httplib2
+
+      - name: Build new reel (does NOT publish to Instagram)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GDRIVE_CREDENTIALS_JSON: ${{ secrets.GDRIVE_CREDENTIALS_JSON }}
+        run: python trailblazers_new_reel.py
+
+      - name: Upload result clip as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trailblazers-new-reel
+          path: |
+            output_clips_newreel/
+            transcript_debug_newreel.json
+            hook_debug_newreel.json
+          retention-days: 14
