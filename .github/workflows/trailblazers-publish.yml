@@ -1,0 +1,43 @@
+name: Trailblazers Ann Miura-Ko - OBJAVA na Instagram
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  publish-clips:
+    runs-on: self-hosted
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Python
+        run: python --version
+
+      - name: Install ffmpeg
+        run: ffmpeg -version
+
+      - name: Install Python deps
+        run: pip install requests
+
+      - name: Run publish to Instagram
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: python trailblazers_publish.py
+
+      - name: Upload debug info as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trailblazers-publish-debug
+          path: |
+            transcript_debug.json
+            hooks_debug.json
+            published_debug.json
+            output_clips/info_*.txt
+          retention-days: 30
