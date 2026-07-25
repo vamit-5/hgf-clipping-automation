@@ -26,6 +26,12 @@ sys.stdout.reconfigure(line_buffering=True)
 # NAMERNO NE OBJAVLJUJE automatski na Instagram - samo pravi klip za pregled,
 # jer je prethodni auto-publish run propustio @trailblazers_pod tag i bolje
 # je da korisnik pregleda pre nego sto ovaj tip klipa ide u redovnu produkciju.
+#
+# NAPOMENA (run #1 je pukao sa "Claude nije vratio validne segmente"): dodati
+# su dijagnosticki ispisi ispod - (1) da li se rec "lyft" uopste pominje u
+# transkriptu i gde, i (2) sirov Claude odgovor pre JSON parsiranja - da
+# sledeci put odmah znamo da li je problem "tema nije u ovoj epizodi" ili
+# "Claude je vratio los format".
 # ---------------------------------------------------------------------------
 
 WETRANSFER_SHORT_URL = "https://we.tl/t-CNSBnb2WgM3qgNGe"
@@ -51,6 +57,11 @@ CONCEPT_DESCRIPTION = (
     "sta je videla kad skoro niko drugi nije verovao u to, i o kakvom se "
     "ogromnom povracaju na kraju radilo."
 )
+
+# Kljucne reci koje moraju postojati u transkriptu da bi CONCEPT_DESCRIPTION
+# uopste imao smisla za ovu konkretnu epizodu - koristi se samo za
+# dijagnostiku (ne za filtriranje), da odmah znamo da li je tema prisutna.
+CONCEPT_KEYWORDS = ["lyft"]
 
 RETRY_ATTEMPTS = 5
 RETRY_DELAYS = [5, 10, 20, 40]
@@ -154,6 +165,27 @@ def snap_time_to_words(target, words, key):
     closest = min(words, key=lambda w: abs(w[key] - target))
     return closest[key]
 
+def scan_for_keywords(words, keywords):
+    """Dijagnostika: ispisuje SVA mesta gde se pominju kljucne reci (npr.
+    'lyft') u transkriptu, sa vremenskim oznakama - da odmah znamo da li
+    CONCEPT_DESCRIPTION uopste ima sansu da postoji u ovoj epizodi PRE nego
+    sto potrosimo Claude poziv na to."""
+    found_any = False
+    for kw in keywords:
+        hits = [w for w in words if kw.lower() in w["word"].lower()]
+        if hits:
+            found_any = True
+            times = ", ".join(f"{h['start']:.1f}s" for h in hits[:20])
+            print(f"[dijagnostika] '{kw}' pronadjeno {len(hits)}x u transkriptu, na: {times}")
+        else:
+            print(f"[dijagnostika] '{kw}' NIJE pronadjeno NIGDE u transkriptu ove epizode.")
+    if not found_any:
+        print(
+            "[dijagnostika] UPOZORENJE: nijedna kljucna rec nije pronadjena - "
+            "CONCEPT_DESCRIPTION verovatno ne postoji u ovoj konkretnoj epizodi "
+            "i treba promeniti temu na jednu od preostale 4 'Content examples' ideje."
+        )
+
 def find_single_hook_segment(words, api_key, total_duration, concept_description):
     lines = [f"[{w['start']:.1f}] {w['word']}" for w in words]
     transcript_text = " ".join(lines)
@@ -178,6 +210,10 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         f"- Ukupno trajanje: izmedju {MIN_CLIP_SECONDS} i {MAX_CLIP_SECONDS} sekundi.\n"
         "- Samo JEDNA jasna ideja/lekcija u ovom klipu (ne kombinuj sa drugim nepovezanim temama).\n"
         "- Koristi TACNE reci iz transkripta - ne parafraziraj i ne izmisljaj njene izjave.\n\n"
+        "AKO ova konkretna tema NIJE prisutna u transkriptu (npr. ako se Lyft ili slican "
+        "konkretan detalj uopste ne pominje), odgovori sa praznim clips nizom (\"clips\": []) i "
+        "u reason polju napisi da tema nije pronadjena - NEMOJ izmisljati ili aproksimirati "
+        "segmente koji se ne odnose direktno na trazenu temu.\n\n"
         "Napravi i JEDINSTVEN Instagram caption (na engleskom, 1-2 recenice) koji se konkretno "
         "odnosi na ovaj sadrzaj. Caption MORA da sadrzi SVE sledece: (1) eksplicitno pomene "
         "'Ann Miura-Ko' i 'Trailblazers' da bude jasno da je ovo intervju sa njom na tom "
@@ -199,14 +235,24 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
 
     response = retry_request(do_call, "Claude hook-detekcija (novi reel)")
     text = response.json()["content"][0]["text"].strip()
+    print(f"[dijagnostika] Sirov Claude odgovor (prvih 1000 karaktera):\n{text[:1000]}")
     if text.startswith("```"):
         text = text.strip("`")
         if text.lower().startswith("json"):
             text = text[4:]
         text = text.strip()
 
-    h = json.loads(text)
+    try:
+        h = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"[dijagnostika] Claude odgovor NIJE validan JSON: {e}")
+        print(f"[dijagnostika] Pun odgovor:\n{text}")
+        raise RuntimeError("Claude nije vratio validan JSON za trazenu temu.") from e
+
     raw_clips = h.get("clips", [])
+    print(f"[dijagnostika] Claude reason: {h.get('reason', '(nema)')}")
+    print(f"[dijagnostika] Claude je vratio {len(raw_clips)} sirovih clip segmenata: {raw_clips}")
+
     snapped_clips = []
     for c in raw_clips:
         try:
@@ -223,7 +269,9 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
             snapped_clips.append([round(start, 2), round(end, 2)])
 
     if not snapped_clips:
-        raise RuntimeError("Claude nije vratio validne segmente za trazenu temu.")
+        raise RuntimeError(
+            f"Claude nije vratio validne segmente za trazenu temu. Reason: {h.get('reason', '(nema)')}"
+        )
 
     hard_ceiling = MAX_CLIP_SECONDS + 15
     total = 0.0
@@ -422,6 +470,8 @@ def main():
 
     with open("transcript_debug_newreel.json", "w", encoding="utf-8") as f:
         json.dump(words, f, indent=2)
+
+    scan_for_keywords(words, CONCEPT_KEYWORDS)
 
     hook = find_single_hook_segment(words, anthropic_key, duration, CONCEPT_DESCRIPTION)
     with open("hook_debug_newreel.json", "w", encoding="utf-8") as f:
