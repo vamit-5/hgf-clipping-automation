@@ -369,9 +369,8 @@ def main():
         build_captions_file(sc_words, 0.0, sc_duration + 1.0, captions_path)
         finalize_clip(supercut_path, captions_path, final_path)
 
-        with open(f"output_clips/info_{idx}.txt", "w") as f:
+        with open(f"output_clips/info_{idx}.txt", "w", encoding="utf-8") as f:
             f.write(f"Reason: {hook['reason']}\n\nCaption: {hook['caption']}\n\nClips (sec): {clips}\n")
-
         print(f"Klip {idx} gotov: {final_path}")
 
     print("SVI TEST KLIPOVI GOTOVI. Nista nije objavljeno na Instagram (dry-run).")
