@@ -92,7 +92,7 @@ def download_from_wetransfer(short_url, destination):
                         pct = int(downloaded * 100 / total)
                         if pct != last_pct and pct % 10 == 0:
                             print(f"Preuzeto: {pct}%")
-                        last_pct = pct
+                            last_pct = pct
     size_mb = os.path.getsize(destination) / (1024 * 1024)
     print(f"Preuzimanje zavrseno: {destination} (~{size_mb:.1f} MB)")
 
@@ -158,8 +158,10 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=N_HOOKS):
         "- Razliciti supercut klipovi ne smeju deliti iste izjave.\n"
         f"Video traje ukupno {total_duration:.0f}s.\n\n"
         "Za svaki klip napravi JEDINSTVEN caption (engleski, 1-2 recenice) koji se konkretno odnosi "
-        "na TAJ sadrzaj. Caption MORA sadrzati: 'Subscribe to @thetrailblazerspod on YouTube for "
-        "the full episode', i 3-5 relevantnih hashtag-ova (npr #VC #Startups #AnnMiuraKo "
+        "na TAJ sadrzaj. Caption MORA sadrzati SVA sledeca tri elementa: (1) tacnu recenicu "
+        "'Subscribe to @thetrailblazerspod on YouTube for the full episode', (2) ODVOJEN tag "
+        "'@trailblazers_pod' (ovo je OBAVEZNO, RAZLICITO je od handle-a iz stavke 1, nikad ga ne "
+        "izostavljaj), i (3) 3-5 relevantnih hashtag-ova (npr #VC #Startups #AnnMiuraKo "
         "#Trailblazers #VentureCapital). Ne ponavljaj isti caption.\n\n"
         "Odgovori ISKLJUCIVO validnim JSON nizom, bez ikakvog dodatnog teksta:\n"
         '[{"clips": [{"start": <broj>, "end": <broj>}, ...], '
@@ -211,7 +213,16 @@ def find_hook_segments(words, api_key, total_duration, n_hooks=N_HOOKS):
                 break
             trimmed.append([s, e])
             total += length
-        cleaned.append({"clips": trimmed, "reason": h.get("reason", ""), "caption": h.get("caption", "")})
+
+        caption = h.get("caption", "") or ""
+        # SIGURNOSNA MREZA: brief zahteva da caption OBAVEZNO sadrzi i tag
+        # @trailblazers_pod (odvojeno od "Subscribe to @thetrailblazerspod..."
+        # recenice) - ranije smo ovo propustili u 5 vec objavljenih klipova.
+        # Ako Claude ipak zaboravi tag, dodajemo ga programski da nikad vise
+        # ne objavimo klip bez ovog obaveznog taga.
+        if "@trailblazers_pod" not in caption:
+            caption = (caption.rstrip() + " @trailblazers_pod").strip()
+        cleaned.append({"clips": trimmed, "reason": h.get("reason", ""), "caption": caption})
 
     print(f"Pronadjeno {len(cleaned)} supercut kombinacija.")
     return cleaned
