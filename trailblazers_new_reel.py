@@ -84,10 +84,12 @@ def retry_request(func, description):
                                     if response.status_code < 400:
                                                         return response
                                                     if 400 <= response.status_code < 500:
-                                                                        print(f"[{description}] TRAJNA GRESKA {response.status_code}: {response.text[:500]}")
-                                                                        raise RuntimeError(f"{description} nije uspeo (trajna greska {response.status_code}).")
-                                                                    print(f"[{description}] Privremena greska {response.status_code}, pokusaj {attempt}/{RETRY_ATTEMPTS}")
-                                    last_error = RuntimeError(f"{description}: {response.status_code} {response.text[:500]}")
+    print(f"[{description}] TRAJNA GRESKA {response.status_code}: {response.text[:500]}")
+    raise RuntimeError(f"{description} nije uspeo (trajna greska {response.status_code}).")
+
+print(f"[{description}] Privremena greska {response.status_code}, pokusaj {attempt}/{RETRY_ATTEMPTS}")
+
+last_error = RuntimeError(f"{description}: {response.status_code} {response.text[:500]}")
 except requests.RequestException as e:
             print(f"[{description}] Mrezna greska, pokusaj {attempt}/{RETRY_ATTEMPTS}: {e}")
             last_error = e
