@@ -392,7 +392,7 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, backg
     dijaloga + pozadinske muzike.
 
     VAZNO: Remotion render NE MOZE da ucita fajl direktno preko apsolutne
-    Windows putanje (C:\Users\...) - mora preko svog lokalnog servera,
+    Windows putanju (npr. C:/Users/...) - mora preko svog lokalnog servera,
     koriscenjem staticFile() na TSX strani. Zato OVDE prvo kopiramo video i
     muziku u remotion/trailblazers/public/ folder, i prosledjujemo SAMO ime
     fajla (ne punu putanju) kao props - TrailblazersReel.tsx onda poziva
