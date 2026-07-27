@@ -57,7 +57,7 @@ BACKGROUND_AUDIO_FILE_IDS = [
 BACKGROUND_AUDIO_VOLUME = 0.45
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-REMOTION_ENTRY = "remotion/trailblazers/src/index.ts"
+REMOTION_ENTRY = "src/index.ts"  # relativno na REMOTION_WORKDIR (cwd), ne od korena repoa
 REMOTION_COMPOSITION_ID = "TrailblazersReel"
 REMOTION_WORKDIR = "remotion/trailblazers"
 
