@@ -25,7 +25,7 @@ jobs:
         run: npm install
 
       - name: Install Python deps
-        run: pip install requests google-auth google-auth-httplib2 google-api-python-client httplib2
+        run: pip install requests google-auth google-auth-httplib2 google-api-python-client httplib2 opencv-python-headless
 
       - name: Build new reel (does NOT publish to Instagram)
         env:
