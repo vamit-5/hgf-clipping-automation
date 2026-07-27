@@ -57,19 +57,19 @@ const HALF_OVERFLOW = (RENDERED_VIDEO_WIDTH - CANVAS_WIDTH) / 2;
 
 type CameraBeat = { start: number; end: number; panPx: number; zoom: number };
 
-function findNearestSample(samples: FaceSample[], t: number): FaceSample | null {
-    if (samples.length === 0) return null;
-    let best = samples[0];
-    let bestDiff = Math.abs(samples[0].t - t);
-    for (const s of samples) {
-          const diff = Math.abs(s.t - t);
-          if (diff < bestDiff) {
-                  best = s;
-                  bestDiff = diff;
-          }
-    }
-    return best;
-}
+// PROMENA: pre je "beat" (koliko dugo kadar stoji pre sledece tranzicije)
+// bio odredjen isivo trajanjem govora (svakih ~2.6s bez obzira sta se desava
+// na slici) - zato su tranzicije delovale nasumicno, ne uklopljene sa
+// stvarnim sekom kamere u izvornom videu. Sada se novi "beat" pravi SAMO
+// kada se STVARNO izmerena pozicija lica (xFrac) znacajno promeni izmedju
+// uzoraka - to je trenutak kad se kamera u izvoru stvarno posekla na drugi
+// kadar. Da se ne bi "beat" napravio zbog trenutnog suma u detekciji lica
+// (jedan promasen frame), nova pozicija mora da se "potvrdi" tako sto
+// ostane priblizno ista u sledecih par uzoraka pre nego sto se racuna kao
+// prava promena kamere.
+const CUT_THRESHOLD = 0.12; // xFrac promena koja znaci "kamera se posekla"
+const MIN_BEAT_SECONDS = 0.5; // ne pravi novi beat prebrzo posle prethodnog
+const CONFIRM_SAMPLES = 2; // nova pozicija mora da se zadrzi ovoliko uzoraka
 
 // Pretvara STVARNO izmerenu poziciju lica (xFrac, wFrac - udeo sirine
 // izvornog kadra) u tacan pomeraj (panPx) i zum potreban da to lice zavrsi
@@ -87,42 +87,57 @@ function computePanAndZoom(sample: FaceSample) {
     return { panPx, zoom };
 }
 
+// Beat-ovi se sada prave iskljucivo iz STVARNIH promena kamere (izmerenih
+// preko pozicije lica), ne iz trajanja govora. words/groupWords se i dalje
+// koriste samo za same titlove (Captions komponenta), ne za tempo kadra.
 function buildCameraBeats(
-    words: Word[],
-    minBeatSeconds: number,
-    facePositions: FaceSample[]
+    facePositions: FaceSample[],
+    totalDuration: number
 ): CameraBeat[] {
-    const groups = groupWords(words);
-    if (groups.length === 0) return [];
+    if (facePositions.length === 0) {
+          return [{ start: 0, end: totalDuration, panPx: 0, zoom: 1.1 }];
+    }
 
-    const rawBeats: { start: number; end: number }[] = [];
-    let currentStart: number | null = null;
-    let currentEnd = 0;
+    const sorted = [...facePositions].sort((a, b) => a.t - b.t);
+    const rawBeats: { start: number; samples: FaceSample[] }[] = [
+          { start: sorted[0].t, samples: [sorted[0]] },
+    ];
 
-    for (const g of groups) {
-          const gStart = g[0].start;
-          const gEnd = g[g.length - 1].end;
-          if (currentStart === null) {
-                  currentStart = gStart;
-                  currentEnd = gEnd;
-                  continue;
+    for (let i = 1; i < sorted.length; i++) {
+          const prev = sorted[i - 1];
+          const cur = sorted[i];
+          const activeBeat = rawBeats[rawBeats.length - 1];
+          const delta = Math.abs(cur.xFrac - prev.xFrac);
+          const longEnoughSinceLastCut = cur.t - activeBeat.start >= MIN_BEAT_SECONDS;
+
+          let isRealCut = false;
+          if (delta > CUT_THRESHOLD && longEnoughSinceLastCut) {
+                  // Potvrdi da nova pozicija nije samo trenutni sum - proveri da
+                  // li ostaje priblizno ista u sledecih par uzoraka.
+                  let holds = true;
+                  for (let k = i; k < Math.min(sorted.length, i + CONFIRM_SAMPLES); k++) {
+                          if (Math.abs(sorted[k].xFrac - cur.xFrac) > CUT_THRESHOLD) {
+                                  holds = false;
+                                  break;
+                          }
+                  }
+                  isRealCut = holds;
           }
-          if (gEnd - currentStart >= minBeatSeconds) {
-                  rawBeats.push({ start: currentStart, end: gEnd });
-                  currentStart = null;
+
+          if (isRealCut) {
+                  rawBeats.push({ start: cur.t, samples: [cur] });
           } else {
-                  currentEnd = gEnd;
+                  activeBeat.samples.push(cur);
           }
     }
-    if (currentStart !== null) {
-          rawBeats.push({ start: currentStart, end: Math.max(currentEnd, currentStart + minBeatSeconds) });
-    }
 
-    return rawBeats.map((b) => {
-          const midT = (b.start + b.end) / 2;
-          const sample = findNearestSample(facePositions, midT);
-          const { panPx, zoom } = sample ? computePanAndZoom(sample) : { panPx: 0, zoom: 1.1 };
-          return { start: b.start, end: b.end, panPx, zoom };
+    return rawBeats.map((b, idx) => {
+          const end = idx < rawBeats.length - 1 ? rawBeats[idx + 1].start : totalDuration;
+          // Srednji uzorak (medijana po vremenu) unutar beat-a, radi
+          // stabilnijeg kadriranja umesto oslanjanja na jedan frame.
+          const midSample = b.samples[Math.floor(b.samples.length / 2)];
+          const { panPx, zoom } = computePanAndZoom(midSample);
+          return { start: b.start, end, panPx, zoom };
     });
 }
 
@@ -144,14 +159,14 @@ function useCameraState(beats: CameraBeat[]) {
     const breathe = 1 + holdProgress * 0.04;
 
     // "Punch" - brz nalet zuma odmah posle reza, pa smirivanje - daje
-    // energican, "seckan" osecaj na svakom rezu kamere.
+    // energican, "seckan" osecaj, ali sada tacno na pravom rezu kamere.
     const timeSinceCut = t - beat.start;
     const punch = interpolate(timeSinceCut, [0, 0.18], [1.1, 1], {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
     });
 
-    // Kratak beo bljesak na svakom rezu - vizuelni "wow" akcenat.
+    // Kratak beo bljesak - sada se javlja SAMO na stvarnom rezu kamere.
     const flashOpacity = interpolate(
           timeSinceCut,
           [0, 0.05, 0.16],
@@ -170,12 +185,13 @@ export const TrailblazersReel: React.FC<Props> = ({
     videoPath,
     bgMusicPath,
     bgMusicVolume,
+    durationInSeconds,
     words,
     facePositions,
 }) => {
     const beats = React.useMemo(
-          () => buildCameraBeats(words, 2.6, facePositions ?? []),
-          [words, facePositions]
+          () => buildCameraBeats(facePositions ?? [], durationInSeconds),
+          [facePositions, durationInSeconds]
         );
     const { panPx, scale, flashOpacity } = useCameraState(beats);
 
