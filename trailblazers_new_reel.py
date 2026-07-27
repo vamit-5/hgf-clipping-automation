@@ -389,10 +389,29 @@ def download_drive_file(service, file_id, destination):
 def render_with_remotion(video_path, words, duration_seconds, output_path, background_audio_path=None):
     """Renderuje kompletan finalni video kroz Remotion: animirani brending,
     animirani titlovi rec-po-rec, suptilni pozadinski akcenti, i mix
-    dijaloga + pozadinske muzike."""
+    dijaloga + pozadinske muzike.
+
+    VAZNO: Remotion render NE MOZE da ucita fajl direktno preko apsolutne
+    Windows putanje (C:\Users\...) - mora preko svog lokalnog servera,
+    koriscenjem staticFile() na TSX strani. Zato OVDE prvo kopiramo video i
+    muziku u remotion/trailblazers/public/ folder, i prosledjujemo SAMO ime
+    fajla (ne punu putanju) kao props - TrailblazersReel.tsx onda poziva
+    staticFile(videoPath) da ih ucita ispravno.
+    """
+    public_dir = os.path.join(REMOTION_WORKDIR, "public")
+    os.makedirs(public_dir, exist_ok=True)
+
+    video_filename = "render_video.mp4"
+    shutil.copyfile(video_path, os.path.join(public_dir, video_filename))
+
+    bg_filename = ""
+    if background_audio_path:
+        bg_filename = "render_bg_audio.mp3"
+        shutil.copyfile(background_audio_path, os.path.join(public_dir, bg_filename))
+
     props = {
-        "videoPath": os.path.abspath(video_path),
-        "bgMusicPath": os.path.abspath(background_audio_path) if background_audio_path else "",
+        "videoPath": video_filename,
+        "bgMusicPath": bg_filename,
         "bgMusicVolume": BACKGROUND_AUDIO_VOLUME,
         "durationInSeconds": duration_seconds,
         "words": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in words],
