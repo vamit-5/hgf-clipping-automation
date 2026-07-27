@@ -12,8 +12,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # Trailblazers x Ann Miura-Ko - JEDAN NOVI reel, po tacnim uputstvima korisnika:
 # - ostar, pun 9:16 kadar (BEZ blur pozadine/letterboxing - kao "bg" sloj iz
 # stare verzije, koji je vec dobro drzao oba lica u kadru)
-# - hook je JEDNA od 5 "Content examples" ideja iz brief-a (ovde: Lyft opklada
-# koja se isplatila ~10.000 puta), NE generican auto-hook
+# - hook je JEDNA konkretna tema koja STVARNO postoji u transkriptu
 # - prva rec se NIKAD ne sece, cist rez - pocinje tacno pre najjace recenice
 # i zavrsava tacno posle nje, bez "mrtvog vazduha"
 # - dramaticna pozadinska muzika (ISTI Google Drive fajlovi kao HGF pipeline
@@ -31,11 +30,10 @@ sys.stdout.reconfigure(line_buffering=True)
 # jer je prethodni auto-publish run propustio @trailblazers_pod tag i bolje
 # je da korisnik pregleda pre nego sto ovaj tip klipa ide u redovnu produkciju.
 #
-# NAPOMENA (run #1 je pukao sa "Claude nije vratio validne segmente"): dodati
-# su dijagnosticki ispisi ispod - (1) da li se rec "lyft" uopste pominje u
-# transkriptu i gde, i (2) sirov Claude odgovor pre JSON parsiranja - da
-# sledeci put odmah znamo da li je problem "tema nije u ovoj epizodi" ili
-# "Claude je vratio los format".
+# PROMENA (run #7): CONCEPT_DESCRIPTION promenjen sa Lyft price (koja NIJE
+# detaljno pokrivena u ovoj konkretnoj epizodi - Claude je to ispravno
+# prepoznao i odbio da izmisli sadrzaj) na Twitter/X investiciju, koja se
+# stvarno pominje u transkriptu.
 # ---------------------------------------------------------------------------
 
 WETRANSFER_SHORT_URL = "https://we.tl/t-CNSBnb2WgM3qgNGe"
@@ -61,16 +59,15 @@ REMOTION_COMPOSITION_ID = "TrailblazersReel"
 REMOTION_WORKDIR = "remotion/trailblazers"
 
 CONCEPT_DESCRIPTION = (
-    "Njena rana investicija u Lyft - opklada koja se na kraju isplatila oko "
-    "10.000 puta (\"the bet that came back 10,000x\"). Kako je donela tu odluku, "
-    "sta je videla kad skoro niko drugi nije verovao u to, i o kakvom se "
-    "ogromnom povracaju na kraju radilo."
+    "Njena investicija u Twitter/X - sta ju je privuklo toj prilici, kako je "
+    "razmisljala o riziku i odluci da ulozi, i kakav je bio ishod ili licni "
+    "utisak o toj investiciji."
 )
 
 # Kljucne reci koje moraju postojati u transkriptu da bi CONCEPT_DESCRIPTION
 # uopste imao smisla za ovu konkretnu epizodu - koristi se samo za
 # dijagnostiku (ne za filtriranje), da odmah znamo da li je tema prisutna.
-CONCEPT_KEYWORDS = ["lyft"]
+CONCEPT_KEYWORDS = ["twitter", "x.com", "elon"]
 
 RETRY_ATTEMPTS = 5
 RETRY_DELAYS = [5, 10, 20, 40]
@@ -183,7 +180,7 @@ def snap_time_to_words(target, words, key):
 
 def scan_for_keywords(words, keywords):
     """Dijagnostika: ispisuje SVA mesta gde se pominju kljucne reci (npr.
-    'lyft') u transkriptu, sa vremenskim oznakama - da odmah znamo da li
+    'twitter') u transkriptu, sa vremenskim oznakama - da odmah znamo da li
     CONCEPT_DESCRIPTION uopste ima sansu da postoji u ovoj epizodi PRE nego
     sto potrosimo Claude poziv na to."""
     found_any = False
@@ -199,7 +196,7 @@ def scan_for_keywords(words, keywords):
         print(
             "[dijagnostika] UPOZORENJE: nijedna kljucna rec nije pronadjena - "
             "CONCEPT_DESCRIPTION verovatno ne postoji u ovoj konkretnoj epizodi "
-            "i treba promeniti temu na jednu od preostale 4 'Content examples' ideje."
+            "i treba promeniti temu na nesto sto se STVARNO pominje."
         )
 
 
@@ -227,10 +224,9 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         f"- Ukupno trajanje: izmedju {MIN_CLIP_SECONDS} i {MAX_CLIP_SECONDS} sekundi.\n"
         "- Samo JEDNA jasna ideja/lekcija u ovom klipu (ne kombinuj sa drugim nepovezanim temama).\n"
         "- Koristi TACNE reci iz transkripta - ne parafraziraj i ne izmisljaj njene izjave.\n\n"
-        "AKO ova konkretna tema NIJE prisutna u transkriptu (npr. ako se Lyft ili slican "
-        "konkretan detalj uopste ne pominje), odgovori sa praznim clips nizom (\"clips\": []) i "
-        "u reason polju napisi da tema nije pronadjena - NEMOJ izmisljati ili aproksimirati "
-        "segmente koji se ne odnose direktno na trazenu temu.\n\n"
+        "AKO ova konkretna tema NIJE prisutna u transkriptu, odgovori sa praznim clips nizom "
+        "(\"clips\": []) i u reason polju napisi da tema nije pronadjena - NEMOJ izmisljati ili "
+        "aproksimirati segmente koji se ne odnose direktno na trazenu temu.\n\n"
         "Napravi i JEDINSTVEN Instagram caption (na engleskom, 1-2 recenice) koji se konkretno "
         "odnosi na ovaj sadrzaj. Caption MORA da sadrzi SVE sledece: (1) eksplicitno pomene "
         "'Ann Miura-Ko' i 'Trailblazers' da bude jasno da je ovo intervju sa njom na tom "
