@@ -11,31 +11,22 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 # ---------------------------------------------------------------------------
-# Trailblazers x Ann Miura-Ko - JEDAN NOVI reel, po tacnim uputstvima korisnika:
-# - ostar, pun 9:16 kadar (BEZ blur pozadine/letterboxing - kao "bg" sloj iz
-# stare verzije, koji je vec dobro drzao oba lica u kadru)
-# - hook je JEDNA konkretna tema koja STVARNO postoji u transkriptu
-# - prva rec se NIKAD ne sece, cist rez - pocinje tacno pre najjace recenice
-# i zavrsava tacno posle nje, bez "mrtvog vazduha"
-# - dramaticna pozadinska muzika (ISTI Google Drive fajlovi kao HGF pipeline
-# u run_schedule.py), pojacana (0.45 umesto HGF-ovih 0.35)
+# Trailblazers x Ann Miura-Ko - JEDAN NOVI reel, po zvanicnom brief-u.
+# - PROMENA (run #11): umesto da skripta sama skida video preko WeTransfer-a
+# (nepouzdano, linkovi isticu/menjaju format), korisnik rucno stavlja
+# preuzeti video fajl kao "annmiura_source.mp4" u working-directory
+# runnera PRE pokretanja - skripta to prepoznaje i preskace preuzimanje.
+# WeTransfer kod je ostavljen kao fallback ako fajl slucajno ne postoji.
+# - PROMENA (run #11): tema promenjena na zvanicnu ideju #1 iz brief-a
+# ("The idea that made no sense") - direktno vezana za naslov epizode
+# ("The $1B Idea That Made No Sense"), najverovatnije najbolje pokrivena
+# tema u transkriptu.
+# - ostar, pun 9:16 kadar, cist rez bez "mrtvog vazduha"
+# - dramaticna pozadinska muzika (Google Drive fajlovi kao HGF pipeline)
 # - mali xfade/acrossfade tranzicioni efekti izmedju spojenih izjava
-# - FINALNI RENDER (brending, titlovi, mix muzike) sada radi REMOTION
-# (Node.js/React) umesto ffmpeg drawtext+.ass - daje animirane, brendirane
-# titlove i overlay elemente umesto staticnog teksta. ffmpeg i dalje radi
-# secenje/tranzicije (build_supercut_with_transitions), Remotion samo
-# preuzima gotov supercut.mp4 i renderuje finalni brendirani/animirani sloj.
-# - 30-60s, JEDNA ideja, razlicit segment od 5 vec objavljenih klipova
-# - postuje Approved Use Cases i Branding & Title Rules iz brief-a (na ekranu
-# pise "Trailblazers Podcast | Ann Miura-Ko", sad animirano kroz Remotion)
-# NAMERNO NE OBJAVLJUJE automatski na Instagram - samo pravi klip za pregled,
-# jer je prethodni auto-publish run propustio @trailblazers_pod tag i bolje
-# je da korisnik pregleda pre nego sto ovaj tip klipa ide u redovnu produkciju.
-#
-# PROMENA (run #9): FileNotFoundError [WinError 2] pri pozivu "npx" - na
-# Windows-u je npx zapravo npx.cmd, a subprocess.run bez shell=True ga ne
-# nalazi automatski. Resenje: shutil.which("npx") pronalazi tacnu putanju
-# (npx.cmd) pre poziva.
+# - FINALNI RENDER radi REMOTION (animirani brending, titlovi, muzika)
+# - NAMERNO NE OBJAVLJUJE automatski na Instagram - samo pravi klip za
+# pregled.
 # ---------------------------------------------------------------------------
 
 WETRANSFER_SHORT_URL = "https://we.tl/t-CNSBnb2WgM3qgNGe"
@@ -53,7 +44,7 @@ BACKGROUND_AUDIO_FILE_IDS = [
     "1yHsLDQ9yUUe6VtppKUa_MD978Gz7OOHR",
     "1ANHCMAKisUvpxR8KYp0zRnkmKzblj8PN",
 ]
-BACKGROUND_AUDIO_VOLUME = 0.45  # glasnije nego HGF (0.35), po trazenju korisnika
+BACKGROUND_AUDIO_VOLUME = 0.45
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 REMOTION_ENTRY = "remotion/trailblazers/src/index.ts"
@@ -61,15 +52,14 @@ REMOTION_COMPOSITION_ID = "TrailblazersReel"
 REMOTION_WORKDIR = "remotion/trailblazers"
 
 CONCEPT_DESCRIPTION = (
-    "Njena investicija u Twitter/X - sta ju je privuklo toj prilici, kako je "
-    "razmisljala o riziku i odluci da ulozi, i kakav je bio ishod ili licni "
-    "utisak o toj investiciji."
+    "Otvaranje o predlogu/ideji koju su svi drugi odbili (pass-ovali) jer je "
+    "delovala pogresno ili besmisleno. Ann prica o tome kako podrzava ideje "
+    "koje izgledaju pogresno dok ne postanu ocigledne - direktno vezano za "
+    "naslov epizode 'The $1B Idea That Made No Sense'. Trazi konkretan "
+    "primer/pricu o ideji koju je ona podrzala a koju su svi drugi odbili."
 )
 
-# Kljucne reci koje moraju postojati u transkriptu da bi CONCEPT_DESCRIPTION
-# uopste imao smisla za ovu konkretnu epizodu - koristi se samo za
-# dijagnostiku (ne za filtriranje), da odmah znamo da li je tema prisutna.
-CONCEPT_KEYWORDS = ["twitter", "x.com", "elon"]
+CONCEPT_KEYWORDS = ["passed", "wrong", "billion", "made no sense", "everyone"]
 
 RETRY_ATTEMPTS = 5
 RETRY_DELAYS = [5, 10, 20, 40]
@@ -181,10 +171,8 @@ def snap_time_to_words(target, words, key):
 
 
 def scan_for_keywords(words, keywords):
-    """Dijagnostika: ispisuje SVA mesta gde se pominju kljucne reci (npr.
-    'twitter') u transkriptu, sa vremenskim oznakama - da odmah znamo da li
-    CONCEPT_DESCRIPTION uopste ima sansu da postoji u ovoj epizodi PRE nego
-    sto potrosimo Claude poziv na to."""
+    """Dijagnostika: ispisuje SVA mesta gde se pominju kljucne reci u
+    transkriptu, sa vremenskim oznakama."""
     found_any = False
     for kw in keywords:
         hits = [w for w in words if kw.lower() in w["word"].lower()]
@@ -197,8 +185,7 @@ def scan_for_keywords(words, keywords):
     if not found_any:
         print(
             "[dijagnostika] UPOZORENJE: nijedna kljucna rec nije pronadjena - "
-            "CONCEPT_DESCRIPTION verovatno ne postoji u ovoj konkretnoj epizodi "
-            "i treba promeniti temu na nesto sto se STVARNO pominje."
+            "CONCEPT_DESCRIPTION verovatno ne postoji u ovoj konkretnoj epizodi."
         )
 
 
@@ -381,11 +368,9 @@ def download_drive_file(service, file_id, destination):
 
 
 def render_with_remotion(video_path, words, duration_seconds, output_path, background_audio_path=None):
-    """Zamenjuje staru finalize_clip() (ffmpeg drawtext + .ass). Renderuje
-    kompletan finalni video kroz Remotion (Node.js/React): animirani
-    brending, animirani "kinetic" titlovi rec-po-rec, suptilni pozadinski
-    akcenti, i mix dijaloga + pozadinske muzike - sve u jednom render
-    koraku. Remotion sam mesa audio trake, pa ffmpeg amix vise nije potreban."""
+    """Renderuje kompletan finalni video kroz Remotion: animirani brending,
+    animirani titlovi rec-po-rec, suptilni pozadinski akcenti, i mix
+    dijaloga + pozadinske muzike."""
     props = {
         "videoPath": os.path.abspath(video_path),
         "bgMusicPath": os.path.abspath(background_audio_path) if background_audio_path else "",
