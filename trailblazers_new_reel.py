@@ -4,6 +4,7 @@ import json
 import time
 import random
 import subprocess
+import shutil
 import requests
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -31,9 +32,10 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # jer je prethodni auto-publish run propustio @trailblazers_pod tag i bolje
 # je da korisnik pregleda pre nego sto ovaj tip klipa ide u redovnu produkciju.
 #
-# PROMENA (run #8): UnicodeEncodeError na Windows konzoli kad Claude-ov
-# odgovor sadrzi karaktere koje cp1252 ne ume da ispise (npr. c). Resenje:
-# stdout/stderr eksplicitno prebaceni na UTF-8 kodiranje na vrhu fajla.
+# PROMENA (run #9): FileNotFoundError [WinError 2] pri pozivu "npx" - na
+# Windows-u je npx zapravo npx.cmd, a subprocess.run bez shell=True ga ne
+# nalazi automatski. Resenje: shutil.which("npx") pronalazi tacnu putanju
+# (npx.cmd) pre poziva.
 # ---------------------------------------------------------------------------
 
 WETRANSFER_SHORT_URL = "https://we.tl/t-CNSBnb2WgM3qgNGe"
@@ -395,13 +397,14 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, backg
     with open(props_path, "w", encoding="utf-8") as f:
         json.dump(props, f)
 
+    npx_cmd = shutil.which("npx") or "npx"
     cmd = [
-        "npx", "remotion", "render",
+        npx_cmd, "remotion", "render",
         REMOTION_ENTRY, REMOTION_COMPOSITION_ID, os.path.abspath(output_path),
         f"--props={os.path.abspath(props_path)}",
         "--log=verbose",
     ]
-    print("Renderujem finalni video kroz Remotion (brending, animirani titlovi, muzika)...")
+    print(f"Renderujem finalni video kroz Remotion (koristim: {npx_cmd})...")
     result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=REMOTION_TIMEOUT, cwd=REMOTION_WORKDIR
     )
