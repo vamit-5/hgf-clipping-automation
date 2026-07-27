@@ -1,13 +1,15 @@
 import React from "react";
 import {
     AbsoluteFill,
-    OffthreadVideo,
-    Audio,
     staticFile,
     useCurrentFrame,
     useVideoConfig,
     interpolate,
 } from "remotion";
+// Video/Audio idu iz @remotion/media (noviji, pouzdaniji mehanizam za
+// citanje frejmova - Mediabunny/WebCodecs) umesto OffthreadVideo iz
+// "remotion" paketa, koji je izazivao "No frame found at position X" greske.
+import { Video, Audio } from "@remotion/media";
 import { z } from "zod";
 import { Captions, groupWords, Word } from "./Captions";
 import { Branding } from "./Branding";
@@ -153,7 +155,7 @@ export const TrailblazersReel: React.FC<Props> = ({
     return (
           <AbsoluteFill style={{ backgroundColor: "#000" }}>
                   <AbsoluteFill style={{ overflow: "hidden" }}>
-                      <OffthreadVideo
+                      <Video
                                 src={staticFile(videoPath)}
                                 style={{
                                     position: "absolute",
