@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, spring } from "remotion";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 
 export type Word = { word: string; start: number; end: number };
 
@@ -38,23 +38,22 @@ export const Captions: React.FC<{ words: Word[] }> = ({ words }) => {
         );
     if (!activeGroup) return null;
 
-    // Pop-in animacija: grupa "iskoci" (scale + fade) kad se prvi put pojavi.
+    // Pop-in animacija: SAMO fade + blag pomak nagore (bez scale-a!). Scale
+    // na tekstu je izazivao vidljivo "stiskanje" (izoblicenje) slova tokom
+    // animacije - opacity+translateY nikad ne izoblicuje oblik slova.
     const groupStartFrame = activeGroup[0].start * fps;
-    const popIn = spring({
-          frame: frame - groupStartFrame,
-          fps,
-          config: { damping: 11, stiffness: 180, mass: 0.5 },
-          durationInFrames: 12,
+    const groupOpacity = interpolate(frame, [groupStartFrame, groupStartFrame + 5], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
     });
-    const groupScale = interpolate(popIn, [0, 1], [0.85, 1]);
-    const groupOpacity = interpolate(frame, [groupStartFrame, groupStartFrame + 4], [0, 1], {
+    const groupTranslateY = interpolate(frame, [groupStartFrame, groupStartFrame + 6], [18, 0], {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
     });
 
     return (
           <AbsoluteFill
-                  style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: "32%" }}
+                  style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: "38%" }}
                 >
                 <div
                           style={{
@@ -68,23 +67,20 @@ export const Captions: React.FC<{ words: Word[] }> = ({ words }) => {
                                       borderRadius: 20,
                                       padding: "14px 26px",
                                       boxShadow: "0 8px 30px rgba(0,0,0,0.5)",
-                                      transform: `scale(${groupScale})`,
+                                      transform: `translateY(${groupTranslateY}px)`,
                                       opacity: groupOpacity,
                           }}
                         >
                   {activeGroup.map((w, i) => {
                                     const isActive = t >= w.start && t <= w.end;
-                                    const wordStartFrame = w.start * fps;
-                                    const scale = interpolate(frame, [wordStartFrame - 2, wordStartFrame + 4], [1.25, 1], {
-                                                  extrapolateLeft: "clamp",
-                                                  extrapolateRight: "clamp",
-                                    });
+                                    // Aktivna rec se istice SAMO bojom/pozadinom - bez scale-a
+                                    // (scale je izazivao vidljivo stiskanje/izoblicenje slova).
                                     return (
                                                   <span
                                                                   key={i}
                                                                   style={{
                                                                                     display: "inline-block",
-                                                                                    fontFamily: "Arial, sans-serif",
+                                                                                    fontFamily: "'Arial Black', Arial, sans-serif",
                                                                                     fontWeight: 900,
                                                                                     fontSize: 60,
                                                                                     color: isActive ? "#0A0A0A" : "#FFFFFF",
@@ -92,7 +88,6 @@ export const Captions: React.FC<{ words: Word[] }> = ({ words }) => {
                                                                                     padding: isActive ? "2px 10px" : "2px 0",
                                                                                     borderRadius: 8,
                                                                                     textShadow: isActive ? "none" : "0 2px 10px rgba(0,0,0,0.8)",
-                                                                                    transform: `scale(${scale})`,
                                                                                     textTransform: "uppercase",
                                                                                     letterSpacing: 0.5,
                                                                   }}
