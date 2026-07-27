@@ -425,9 +425,23 @@ def analyze_face_positions(video_path, sample_interval=0.4):
     postoji fiksna pozicija koja uvek radi. Ovo vraca listu stvarnih merenja
     koje Remotion koristi da ispravno centrira kadar u svakom trenutku,
     umesto nagadjanja fiksnih brojeva.
-    """
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    face_cascade = cv2.CascadeClassifier(cascade_path)
+
+    PROMENA: stara verzija je koristila SAMO frontalni Haar Cascade
+    detektor, koji promasi kad neko gleda u sagovornika umesto u kameru
+    (profil lica) - i tada bi kod "zamrzavao" poslednju POZNATU (uskozumiranu)
+    poziciju, sto je pravilo dobro AKO se kamera nije bas tada posekla, ali
+    lose ako jeste (kadar ostaje uskozumiran na mestu gde vise nikog nema).
+    Sada: (1) dodat je i profilni detektor + probanje na horizontalno
+    izokrenutoj slici, da uhvati profile "u oba smera"; (2) ako lice ne
+    bude pronadjeno VISE uzoraka zaredom (sto je znak da se kamera verovatno
+    promenila dok cekamo da se detekcija ponovo "uhvati"), kod prestaje da
+    drzi staru usku poziciju i umesto toga siri kadar na bezbednu, manje
+    zumiranu sredinu - manja je sansa da bezbedan siri kadar prikaze
+    prazninu nego stara uska zumirana pozicija."""
+    frontal_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    profile_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
+    frontal_cascade = cv2.CascadeClassifier(frontal_path)
+    profile_cascade = cv2.CascadeClassifier(profile_path)
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -440,32 +454,61 @@ def analyze_face_positions(video_path, sample_interval=0.4):
         cap.release()
         return []
 
+    def detect_best_face(gray):
+        """Proba frontalni pa profilni (i original i izokrenuta slika),
+        vraca najvece pronadjeno lice ili None."""
+        faces = frontal_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        candidates = list(faces)
+        profile_faces = profile_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        candidates.extend(profile_faces)
+        flipped = cv2.flip(gray, 1)
+        flipped_profile = profile_cascade.detectMultiScale(flipped, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        for (fx, fy, fw, fh) in flipped_profile:
+            candidates.append((gray.shape[1] - fx - fw, fy, fw, fh))
+        if not candidates:
+            return None
+        return max(candidates, key=lambda f: f[2] * f[3])
+
     samples = []
     last_x_frac, last_w_frac = 0.5, 0.35
+    miss_streak = 0
+    MAX_FROZEN_MISSES = 3  # posle ovoliko promasaja zaredom, siri kadar umesto zamrzavanja
+    SAFE_WIDE_W_FRAC = 0.55  # bezbedna, manje zumirana sirina kad se ne zna gde je lice
     t = 0.0
     while t < duration:
         frame_idx = min(total_frames - 1, int(t * fps))
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ok, frame = cap.read()
         if not ok:
-            samples.append({"t": round(t, 2), "xFrac": last_x_frac, "wFrac": last_w_frac})
+            miss_streak += 1
+            if miss_streak > MAX_FROZEN_MISSES:
+                x_frac, w_frac = 0.5, SAFE_WIDE_W_FRAC
+            else:
+                x_frac, w_frac = last_x_frac, last_w_frac
+            samples.append({"t": round(t, 2), "xFrac": x_frac, "wFrac": w_frac})
             t += sample_interval
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        face = detect_best_face(gray)
 
-        if len(faces) == 0:
-            # Nijedno lice nije prepoznato (npr. profil, pokret) - zadrzi
-            # POSLEDNJU poznatu dobru poziciju umesto naglog skoka.
-            x_frac, w_frac = last_x_frac, last_w_frac
+        if face is None:
+            # Nijedno lice nije prepoznato (npr. profil, pokret). Kratko
+            # zadrzi POSLEDNJU poznatu dobru poziciju (izbegava nagli skok
+            # zbog jednog promasenog frejma), ali ako promasujemo predugo
+            # zaredom, prebaci na bezbednu siru sredinu umesto da ostanes
+            # zaglavljen na staroj uskoj poziciji koja vise mozda ne vazi.
+            miss_streak += 1
+            if miss_streak > MAX_FROZEN_MISSES:
+                x_frac, w_frac = 0.5, SAFE_WIDE_W_FRAC
+            else:
+                x_frac, w_frac = last_x_frac, last_w_frac
         else:
-            # Ako ima vise lica, uzmi NAJVECE (najverovatnije glavni fokus
-            # kadra - montaza vec zumira na onoga ko govori).
-            fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+            fx, fy, fw, fh = face
             x_frac = (fx + fw / 2) / frame_w
             w_frac = fw / frame_w
             last_x_frac, last_w_frac = x_frac, w_frac
+            miss_streak = 0
 
         samples.append({"t": round(t, 2), "xFrac": round(x_frac, 4), "wFrac": round(w_frac, 4)})
         t += sample_interval
@@ -473,7 +516,6 @@ def analyze_face_positions(video_path, sample_interval=0.4):
     cap.release()
     print(f"[dijagnostika] Detekcija lica: {len(samples)} uzoraka analizirano (svakih {sample_interval}s).")
     return samples
-
 
 def render_with_remotion(video_path, words, duration_seconds, output_path, background_audio_path=None):
     """Renderuje kompletan finalni video kroz Remotion: animirani brending,
