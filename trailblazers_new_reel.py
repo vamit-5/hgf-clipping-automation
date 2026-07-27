@@ -370,6 +370,13 @@ def build_supercut_with_transitions(source_path, clips, output_path, transition=
         # kod snimljenih poziva/podkasta) prenosi tu nepravilnost u iseceni klip,
         # sto zbunjuje Remotion renderer ("No frame found at position X").
         "-r", "30", "-vsync", "cfr",
+        # -bf 0: iskljuci B-frejmove (frejmovi koji se citaju van redosleda
+        # prikazivanja) - cesti uzrok "no frame found" gresaka kod alata
+        # za automatsko izvlacenje frejmova (kao Remotion). -g 30 -keyint_min 30
+        # -sc_threshold 0: redovan, predvidljiv key-frejm na svaku sekundu
+        # (30 frejmova), bez dodatnih key-frejmova "po sceni" koji prave
+        # nepravilan raspored.
+        "-bf", "0", "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
         "-c:a", "aac", "-b:a", "192k", output_path,
     ]
     print(f"Spajam {n} izjava sa {transition}s tranzicijama...")
@@ -448,6 +455,12 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, backg
         REMOTION_ENTRY, REMOTION_COMPOSITION_ID, os.path.abspath(output_path),
         f"--props={os.path.abspath(props_path)}",
         "--log=verbose",
+        # Bez ovoga Remotion na GitHub Actions runneru sam (pogresno) proceni
+        # da ima svega par MB dostupne memorije za kesiranje frejmova, pa
+        # neprestano izbacuje frejmove iz kesa i ponovo ih trazi - sto je
+        # izazivalo "No frame found at position X" greske. 1GB je siguran,
+        # dovoljno velik kes za klipove ove duzine.
+        "--offthreadvideo-cache-size-in-bytes=1073741824",
     ]
     print(f"Renderujem finalni video kroz Remotion (koristim: {npx_cmd})...")
     result = subprocess.run(
