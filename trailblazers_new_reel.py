@@ -410,11 +410,12 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, backg
     ]
     print(f"Renderujem finalni video kroz Remotion (koristim: {npx_cmd})...")
     result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=REMOTION_TIMEOUT, cwd=REMOTION_WORKDIR
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=REMOTION_TIMEOUT, cwd=REMOTION_WORKDIR,
     )
     if result.returncode != 0:
-        print(result.stdout[-3000:])
-        print(result.stderr[-3000:])
+        print((result.stdout or "")[-3000:])
+        print((result.stderr or "")[-3000:])
         raise RuntimeError("Remotion render nije uspeo.")
     print(f"Remotion render zavrsen: {output_path}")
 
