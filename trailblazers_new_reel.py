@@ -6,6 +6,7 @@ import random
 import subprocess
 import shutil
 import requests
+import cv2
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -416,6 +417,64 @@ def download_drive_file(service, file_id, destination):
     os.rename(tmp, destination)
 
 
+def analyze_face_positions(video_path, sample_interval=0.4):
+    """Analizira STVARAN isecen klip frame-po-frame i meri gde se lice
+    (ili lica) nalaze u svakom uzorkovanom trenutku. Izvorni podkast je vec
+    multi-cam montiran - kamera se menja izmedju solo krupnog kadra osobe A,
+    solo krupnog kadra osobe B, i sirokog kadra sa obe osobe - zato NE
+    postoji fiksna pozicija koja uvek radi. Ovo vraca listu stvarnih merenja
+    koje Remotion koristi da ispravno centrira kadar u svakom trenutku,
+    umesto nagadjanja fiksnih brojeva.
+    """
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = (total_frames / fps) if fps else 0
+
+    if frame_w == 0 or frame_h == 0 or duration <= 0:
+        print("[dijagnostika] Detekcija lica: video se nije ispravno ucitao, preskacem.")
+        cap.release()
+        return []
+
+    samples = []
+    last_x_frac, last_w_frac = 0.5, 0.35
+    t = 0.0
+    while t < duration:
+        frame_idx = min(total_frames - 1, int(t * fps))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = cap.read()
+        if not ok:
+            samples.append({"t": round(t, 2), "xFrac": last_x_frac, "wFrac": last_w_frac})
+            t += sample_interval
+            continue
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+
+        if len(faces) == 0:
+            # Nijedno lice nije prepoznato (npr. profil, pokret) - zadrzi
+            # POSLEDNJU poznatu dobru poziciju umesto naglog skoka.
+            x_frac, w_frac = last_x_frac, last_w_frac
+        else:
+            # Ako ima vise lica, uzmi NAJVECE (najverovatnije glavni fokus
+            # kadra - montaza vec zumira na onoga ko govori).
+            fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+            x_frac = (fx + fw / 2) / frame_w
+            w_frac = fw / frame_w
+            last_x_frac, last_w_frac = x_frac, w_frac
+
+        samples.append({"t": round(t, 2), "xFrac": round(x_frac, 4), "wFrac": round(w_frac, 4)})
+        t += sample_interval
+
+    cap.release()
+    print(f"[dijagnostika] Detekcija lica: {len(samples)} uzoraka analizirano (svakih {sample_interval}s).")
+    return samples
+
+
 def render_with_remotion(video_path, words, duration_seconds, output_path, background_audio_path=None):
     """Renderuje kompletan finalni video kroz Remotion: animirani brending,
     animirani titlovi rec-po-rec, suptilni pozadinski akcenti, i mix
@@ -434,6 +493,8 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, backg
     video_filename = "render_video.mp4"
     shutil.copyfile(video_path, os.path.join(public_dir, video_filename))
 
+    face_positions = analyze_face_positions(os.path.join(public_dir, video_filename))
+
     bg_filename = ""
     if background_audio_path:
         bg_filename = "render_bg_audio.mp3"
@@ -445,6 +506,7 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, backg
         "bgMusicVolume": BACKGROUND_AUDIO_VOLUME,
         "durationInSeconds": duration_seconds,
         "words": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in words],
+        "facePositions": face_positions,
     }
     props_path = "output_clips_newreel/remotion_props.json"
     with open(props_path, "w", encoding="utf-8") as f:
