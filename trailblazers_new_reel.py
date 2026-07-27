@@ -17,22 +17,24 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # preuzeti video fajl kao "annmiura_source.mp4" u working-directory
 # runnera PRE pokretanja - skripta to prepoznaje i preskace preuzimanje.
 # WeTransfer kod je ostavljen kao fallback ako fajl slucajno ne postoji.
-# - PROMENA (run #11): tema promenjena na zvanicnu ideju #1 iz brief-a
-# ("The idea that made no sense") - direktno vezana za naslov epizode
-# ("The $1B Idea That Made No Sense"), najverovatnije najbolje pokrivena
-# tema u transkriptu.
 # - PROMENA (run #12): AKO Claude ne pronadje temu u transkriptu, skripta
 # VISE NE PUCA sa RuntimeError (sto je gasilo ceo GitHub Actions job kao
-# FAILED). To nije prava greska u kodu - to znaci da OVA KONKRETNA epizoda
-# jednostavno ne sadrzi trazenu temu (CONCEPT_DESCRIPTION). Skripta sada
-# to jasno ispise i izadje NORMALNO (exit code 0), bez rusenja builda.
-# Ako se ovo redovno desava, verovatno CONCEPT_DESCRIPTION/CONCEPT_KEYWORDS
-# ne odgovaraju epizodi koja se trenutno obradjuje - videti napomenu u
-# find_single_hook_segment().
+# FAILED). Skripta sada to jasno ispise i izadje NORMALNO (exit code 0),
+# bez rusenja builda.
+# - PROMENA (run #13): CONCEPT_DESCRIPTION sa jednom uskom, hardkodovanom
+# temom (vezanom za naslov TACNO JEDNE epizode) zamenjena je opstim,
+# trajnim kriterijumima sadrzaja (CONTENT_CRITERIA) koji vaze za SVAKU
+# epizodu ovog podkasta - po zvanicnom brief-u odobrene su TRI vrste
+# klipova: standalone advice (prioritet), hot-take/kontrarian, i story
+# clip. Ovo drasticno povecava sanse da se u SVAKOJ epizodi pronadje
+# validan klip, umesto da zavisi od toga da li se pominje bas jedna
+# konkretna, unapred zadata tema.
 # - ostar, pun 9:16 kadar, cist rez bez "mrtvog vazduha"
 # - dramaticna pozadinska muzika (Google Drive fajlovi kao HGF pipeline)
 # - mali xfade/acrossfade tranzicioni efekti izmedju spojenih izjava
-# - FINALNI RENDER radi REMOTION (animirani brending, titlovi, muzika)
+# - FINALNI RENDER radi REMOTION (animirani brending, titlovi, muzika) -
+# eventualni dodatni efekti (zoom in/out, zvucni efekti) zive u Remotion
+# komponenti (remotion/trailblazers/src/...), NE u ovom fajlu.
 # - NAMERNO NE OBJAVLJUJE automatski na Instagram - samo pravi klip za
 # pregled.
 # ---------------------------------------------------------------------------
@@ -59,15 +61,29 @@ REMOTION_ENTRY = "remotion/trailblazers/src/index.ts"
 REMOTION_COMPOSITION_ID = "TrailblazersReel"
 REMOTION_WORKDIR = "remotion/trailblazers"
 
-CONCEPT_DESCRIPTION = (
-    "Otvaranje o predlogu/ideji koju su svi drugi odbili (pass-ovali) jer je "
-    "delovala pogresno ili besmisleno. Ann prica o tome kako podrzava ideje "
-    "koje izgledaju pogresno dok ne postanu ocigledne - direktno vezano za "
-    "naslov epizode 'The $1B Idea That Made No Sense'. Trazi konkretan "
-    "primer/pricu o ideji koju je ona podrzala a koju su svi drugi odbili."
+# Ovi kriterijumi vaze za SVAKU epizodu (nisu vezani za jednu konkretnu temu).
+# Bazirano na zvanicnom brief-u: sta je odobreno za Trailblazers reel-ove.
+CONTENT_CRITERIA = (
+    "Trazis TACNO JEDAN 'supercut' klip (sastavljen od 3-5 kratkih pojedinacnih izjava "
+    "spojenih jedna za drugom) koji spada u JEDNU od sledece tri odobrene kategorije. "
+    "Prva kategorija je prioritetna/primarni izbor - ako postoji dobar kandidat za nju, "
+    "uzmi nju. Ako ne postoji, probaj drugu ili trecu kategoriju, tim redosledom.\n\n"
+    "1) STANDALONE ADVICE (PRIORITET) - Ann objasnjava JEDNU jasnu ideju ili lekciju "
+    "od pocetka do kraja, potpuno razumljivu samu za sebe, bez potrebe za dodatnim "
+    "kontekstom iz ostatka epizode. Primer: sta je 'thunder lizard' osnivac, kako "
+    "prepoznati product-market fit.\n\n"
+    "2) HOT-TAKE / KONTRARIAN STAV - Ann se jasno suprotstavlja opste prihvacenom "
+    "misljenju, iznosi stav koji lomi ocekivanja (npr. 'najbolje ideje na prvi pogled "
+    "deluju pogresno'). Mora biti prepoznatljiv, jasan 'pattern-breaking' momenat.\n\n"
+    "3) STORY CLIP - licni, ljudski momenat koji dokazuje neku lekciju ili je sam po "
+    "sebi upecatljiva, autenticna prica (npr. zavrsila je doktorat nedelju dana posle "
+    "porodjaja dok je pokretala fond). Mora delovati relatable i stvarno, ne kao suva "
+    "cinjenica.\n\n"
+    "NIJE prihvatljivo (nemoj birati ovakve segmente):\n"
+    "- Nasumican ili nepovezan segment bez jasnog, prepoznatljivog momenta iz intervjua.\n"
+    "- Segment koji se ne moze razumeti kao celina bez siroko konteksta iz ostatka "
+    "epizode (gledalac mora odmah da 'ukapira' o cemu je rec).\n"
 )
-
-CONCEPT_KEYWORDS = ["passed", "wrong", "billion", "made no sense", "everyone"]
 
 RETRY_ATTEMPTS = 5
 RETRY_DELAYS = [5, 10, 20, 40]
@@ -178,31 +194,13 @@ def snap_time_to_words(target, words, key):
     return closest[key]
 
 
-def scan_for_keywords(words, keywords):
-    """Dijagnostika: ispisuje SVA mesta gde se pominju kljucne reci u
-    transkriptu, sa vremenskim oznakama."""
-    found_any = False
-    for kw in keywords:
-        hits = [w for w in words if kw.lower() in w["word"].lower()]
-        if hits:
-            found_any = True
-            times = ", ".join(f"{h['start']:.1f}s" for h in hits[:20])
-            print(f"[dijagnostika] '{kw}' pronadjeno {len(hits)}x u transkriptu, na: {times}")
-        else:
-            print(f"[dijagnostika] '{kw}' NIJE pronadjeno NIGDE u transkriptu ove epizode.")
-    if not found_any:
-        print(
-            "[dijagnostika] UPOZORENJE: nijedna kljucna rec nije pronadjena - "
-            "CONCEPT_DESCRIPTION verovatno ne postoji u ovoj konkretnoj epizodi."
-        )
-
-
-def find_single_hook_segment(words, api_key, total_duration, concept_description):
-    # NAPOMENA: ako ova funkcija stalno vraca prazne clips-ove za epizode
-    # koje obradjujes, najverovatnije CONCEPT_DESCRIPTION / CONCEPT_KEYWORDS
-    # (na vrhu fajla) opisuju temu koja pripada DRUGOJ epizodi nego onoj koja
-    # je trenutno u annmiura_source.mp4. To nije bug u logici ispod - to je
-    # neslaganje izmedju teksta teme i stvarnog sadrzaja videa koji se obradjuje.
+def find_single_hook_segment(words, api_key, total_duration, content_criteria):
+    # NAPOMENA: content_criteria opisuje OPSTE, trajne kriterijume sadrzaja
+    # (vidi CONTENT_CRITERIA gore) - ne menja se po epizodi. Ako ova funkcija
+    # ipak stalno vraca prazne clips-ove, to znaci da u konkretnoj epizodi
+    # zaista ne postoji nijedan segment koji ispunjava ni jednu od tri
+    # odobrene kategorije - retko, ali moguce (npr. cisto tehnicki deo bez
+    # ijedne izdvojene licne/kontrarijanske/advice izjave).
     lines = [f"[{w['start']:.1f}] {w['word']}" for w in words]
     transcript_text = " ".join(lines)
     if len(transcript_text) > 60000:
@@ -213,10 +211,8 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         "investitorka - Floodgate), sa vremenskim oznakama u sekundama pre svake reci "
         "(format [12.3] rec).\n\n"
         f"{transcript_text}\n\n"
-        "Napravi TACNO JEDAN kratak 'supercut' klip (sastavljen od 3-5 kratkih pojedinacnih "
-        f"izjava spojenih jedna za drugom) koji se ISKLJUCIVO bavi ovom konkretnom temom:\n"
-        f"{concept_description}\n\n"
-        "Pravila:\n"
+        f"{content_criteria}\n\n"
+        "Dodatna pravila za sam klip (vaze bez obzira na kategoriju):\n"
         "- Prva izjava (hook) mora biti TRENUTNO jasna kao naslov clanka - gledalac mora u "
         "prve 2 sekunde da zna TACNO o cemu je rec. Pocni na najjacoj/najkonkretnijoj recenici, "
         "NE na uvodu ili najavi ('welcome back to the show' stil je ZABRANJEN).\n"
@@ -224,11 +220,12 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         "ni usred nepovezane misli) i zavrsiti tacno na kraju te izjave - cist rez, bez 'mrtvog "
         "vazduha' pre ili posle, prva rec se NIKAD ne sme cuti isecena.\n"
         f"- Ukupno trajanje: izmedju {MIN_CLIP_SECONDS} i {MAX_CLIP_SECONDS} sekundi.\n"
-        "- Samo JEDNA jasna ideja/lekcija u ovom klipu (ne kombinuj sa drugim nepovezanim temama).\n"
+        "- Samo JEDNA jasna ideja/lekcija/prica u ovom klipu (ne kombinuj sa drugim "
+        "nepovezanim temama).\n"
         "- Koristi TACNE reci iz transkripta - ne parafraziraj i ne izmisljaj njene izjave.\n\n"
-        "AKO ova konkretna tema NIJE prisutna u transkriptu, odgovori sa praznim clips nizom "
-        "(\"clips\": []) i u reason polju napisi da tema nije pronadjena - NEMOJ izmisljati ili "
-        "aproksimirati segmente koji se ne odnose direktno na trazenu temu.\n\n"
+        "AKO stvarno NIJEDAN segment iz transkripta ne ispunjava nijednu od tri kategorije, "
+        "odgovori sa praznim clips nizom (\"clips\": []) i u reason polju napisi zasto - "
+        "NEMOJ izmisljati ili aproksimirati segmente koji ne ispunjavaju kriterijume.\n\n"
         "Napravi i JEDINSTVEN Instagram caption (na engleskom, 1-2 recenice) koji se konkretno "
         "odnosi na ovaj sadrzaj. Caption MORA da sadrzi SVE sledece: (1) eksplicitno pomene "
         "'Ann Miura-Ko' i 'Trailblazers' da bude jasno da je ovo intervju sa njom na tom "
@@ -237,6 +234,7 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         "(npr #VC #Startups #AnnMiuraKo #Trailblazers #VentureCapital).\n\n"
         "Odgovori ISKLJUCIVO validnim JSON objektom, bez ikakvog dodatnog teksta:\n"
         '{"clips": [{"start": <broj>, "end": <broj>}, ...], '
+        '"category": "<standalone_advice|hot_take|story_clip>", '
         '"reason": "<kratko objasnjenje na srpskom>", '
         '"caption": "<Instagram caption na engleskom>"}'
     )
@@ -265,6 +263,7 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         raise RuntimeError("Claude nije vratio validan JSON za trazenu temu.") from e
 
     raw_clips = h.get("clips", [])
+    print(f"[dijagnostika] Claude kategorija: {h.get('category', '(nema)')}")
     print(f"[dijagnostika] Claude reason: {h.get('reason', '(nema)')}")
     print(f"[dijagnostika] Claude je vratio {len(raw_clips)} sirovih clip segmenata: {raw_clips}")
 
@@ -283,14 +282,12 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         if end - start >= 1.0:
             snapped_clips.append([round(start, 2), round(end, 2)])
 
-    # PROMENA (run #12): ranije je ovde bio "raise RuntimeError(...)" koji je
-    # gasio ceo GitHub Actions job kao FAILED. To nije prava greska - znaci
-    # samo da ova epizoda ne sadrzi trazenu temu. Sada vracamo prazan
-    # rezultat i main() to obradjuje elegantno (bez pada builda).
+    # Ako Claude ipak ne vrati nijedan validan segment (retko, sa opstim
+    # kriterijumima), skripta se ne rusi - main() ovo obradjuje elegantno.
     if not snapped_clips:
         reason = h.get("reason", "(Claude nije naveo razlog)")
-        print(f"[dijagnostika] Nijedan validan segment nije pronadjen za trazenu temu. Reason: {reason}")
-        return {"clips": [], "reason": reason, "caption": ""}
+        print(f"[dijagnostika] Nijedan validan segment nije pronadjen. Reason: {reason}")
+        return {"clips": [], "reason": reason, "caption": "", "category": h.get("category", "")}
 
     hard_ceiling = MAX_CLIP_SECONDS + 15
     total = 0.0
@@ -306,7 +303,12 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
     if "@trailblazers_pod" not in caption:
         caption = (caption + " @trailblazers_pod").strip()
 
-    return {"clips": trimmed, "reason": h.get("reason", ""), "caption": caption}
+    return {
+        "clips": trimmed,
+        "reason": h.get("reason", ""),
+        "caption": caption,
+        "category": h.get("category", ""),
+    }
 
 
 def build_supercut_with_transitions(source_path, clips, output_path, transition=TRANSITION_SECONDS):
@@ -437,28 +439,27 @@ def main():
     with open("transcript_debug_newreel.json", "w", encoding="utf-8") as f:
         json.dump(words, f, indent=2)
 
-    scan_for_keywords(words, CONCEPT_KEYWORDS)
-
-    hook = find_single_hook_segment(words, anthropic_key, duration, CONCEPT_DESCRIPTION)
+    hook = find_single_hook_segment(words, anthropic_key, duration, CONTENT_CRITERIA)
     with open("hook_debug_newreel.json", "w", encoding="utf-8") as f:
         json.dump(hook, f, indent=2, ensure_ascii=False)
 
     clips = hook["clips"]
 
-    # PROMENA (run #12): graceful izlazak umesto pada builda kad tema nije
-    # pronadjena u ovoj konkretnoj epizodi. Job se sada zavrsava USPESNO
-    # (exit code 0), samo bez generisanog klipa - jasno se vidi u logu zasto.
+    # Graceful izlazak umesto pada builda kad nijedan segment ne ispunjava
+    # kriterijume. Job se zavrsava USPESNO (exit code 0), samo bez
+    # generisanog klipa - jasno se vidi u logu zasto.
     if not clips:
         print("=" * 70)
         print("NEMA REELA ZA OVU EPIZODU.")
-        print("Trazena tema (CONCEPT_DESCRIPTION) nije pronadjena u transkriptu.")
+        print("Nijedan segment iz transkripta ne ispunjava nijednu od tri")
+        print("odobrene kategorije (standalone advice / hot-take / story clip).")
         print(f"Razlog (Claude): {hook['reason']}")
-        print("Ovo NIJE greska u kodu - epizoda jednostavno ne sadrzi trazenu temu,")
-        print("ili CONCEPT_DESCRIPTION/CONCEPT_KEYWORDS na vrhu fajla treba")
-        print("azurirati da odgovaraju epizodi koja se trenutno obradjuje.")
+        print("Ovo NIJE greska u kodu - retko, ali moguce je da epizoda")
+        print("jednostavno nema nijedan segment koji ispunjava kriterijume.")
         print("=" * 70)
         sys.exit(0)
 
+    print(f"Izabrana kategorija: {hook.get('category', '(nepoznato)')}")
     print(f"Izabran segment: {len(clips)} izjava, {clips} - {hook['reason']}")
 
     os.makedirs("output_clips_newreel", exist_ok=True)
@@ -495,6 +496,7 @@ def main():
 
     with open("output_clips_newreel/info.txt", "w", encoding="utf-8") as f:
         f.write(
+            f"Kategorija: {hook.get('category', '')}\n\n"
             f"Reason: {hook['reason']}\n\nCaption: {hook['caption']}\n\n"
             f"Clips (sec): {clips}\n\nTrajanje finalnog klipa: {sc_duration:.1f}s\n"
         )
