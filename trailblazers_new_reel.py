@@ -213,9 +213,17 @@ def find_single_hook_segment(words, api_key, total_duration, content_criteria):
         f"{transcript_text}\n\n"
         f"{content_criteria}\n\n"
         "Dodatna pravila za sam klip (vaze bez obzira na kategoriju):\n"
-        "- Prva izjava (hook) mora biti TRENUTNO jasna kao naslov clanka - gledalac mora u "
-        "prve 2 sekunde da zna TACNO o cemu je rec. Pocni na najjacoj/najkonkretnijoj recenici, "
-        "NE na uvodu ili najavi ('welcome back to the show' stil je ZABRANJEN).\n"
+        "- Prva izjava (hook) mora biti SNAZNA, KONKRETNA i pomalo SOKANTNA/PROVOKATIVNA - "
+        "treba da izazove reakciju 'cekaj, sta?' ili 'wow' u prve 2 sekunde. Mora biti jasan "
+        "STAV ili KONKRETNA TVRDNJA, ne mekana/neodredjena recenica.\n"
+        "ZABRANJENO za hook: generalne, blage recenice tipa 'i think one is...', 'i think the "
+        "leadership is...', 'so basically what happened is...' - ovakve recenice ne otkrivaju "
+        "NISTA konkretno i NE SME biti prva recenica u klipu, cak i ako je to gde tema realno "
+        "pocinje u transkriptu - u tom slucaju TRAZI DRUGI segment koji ima jaci, konkretniji "
+        "pocetak, ili pomeri pocetak klipa unapred/unazad do prve stvarno jake recenice unutar "
+        "iste teme.\n"
+        "- Pocni na najjacoj/najkonkretnijoj recenici, NE na uvodu ili najavi ('welcome back to "
+        "the show' stil je ZABRANJEN).\n"
         "- Svaka pojedinacna izjava mora poceti TACNO na pocetku recenice/izjave (ne usred reci "
         "ni usred nepovezane misli) i zavrsiti tacno na kraju te izjave - cist rez, bez 'mrtvog "
         "vazduha' pre ili posle, prva rec se NIKAD ne sme cuti isecena.\n"
@@ -276,7 +284,16 @@ def find_single_hook_segment(words, api_key, total_duration, content_criteria):
             continue
         if end - start < 1.0:
             continue
-        end = min(end, start + MAX_SINGLE_CLIP_SECONDS)
+        # VAZNO: MAX_SINGLE_CLIP_SECONDS (18s) postoji da nijedna POJEDINACNA
+        # izjava ne pojede ceo budzet kad se SPAJA VISE kratkih izjava u
+        # supercut. Ako Claude vrati SAMO JEDNU izjavu (standalone advice /
+        # story clip koji stoji sam za sebe), ne smemo je grubo odseci na
+        # 18s - to bukvalno prekida recenicu u pola. U tom slucaju dozvoljavamo
+        # joj da traje do MAX_CLIP_SECONDS (60s), sto je siguran fallback.
+        if len(raw_clips) > 1:
+            end = min(end, start + MAX_SINGLE_CLIP_SECONDS)
+        else:
+            end = min(end, start + MAX_CLIP_SECONDS)
         start = max(0.0, snap_time_to_words(start, words, "start") - 0.15)
         end = min(total_duration, snap_time_to_words(end, words, "end") + 0.15)
         if end - start >= 1.0:
