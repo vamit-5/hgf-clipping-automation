@@ -6,7 +6,8 @@ import random
 import subprocess
 import requests
 
-sys.stdout.reconfigure(line_buffering=True)
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 # ---------------------------------------------------------------------------
 # Trailblazers x Ann Miura-Ko - JEDAN NOVI reel, po tacnim uputstvima korisnika:
@@ -30,10 +31,9 @@ sys.stdout.reconfigure(line_buffering=True)
 # jer je prethodni auto-publish run propustio @trailblazers_pod tag i bolje
 # je da korisnik pregleda pre nego sto ovaj tip klipa ide u redovnu produkciju.
 #
-# PROMENA (run #7): CONCEPT_DESCRIPTION promenjen sa Lyft price (koja NIJE
-# detaljno pokrivena u ovoj konkretnoj epizodi - Claude je to ispravno
-# prepoznao i odbio da izmisli sadrzaj) na Twitter/X investiciju, koja se
-# stvarno pominje u transkriptu.
+# PROMENA (run #8): UnicodeEncodeError na Windows konzoli kad Claude-ov
+# odgovor sadrzi karaktere koje cp1252 ne ume da ispise (npr. c). Resenje:
+# stdout/stderr eksplicitno prebaceni na UTF-8 kodiranje na vrhu fajla.
 # ---------------------------------------------------------------------------
 
 WETRANSFER_SHORT_URL = "https://we.tl/t-CNSBnb2WgM3qgNGe"
