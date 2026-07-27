@@ -348,6 +348,11 @@ def build_supercut_with_transitions(source_path, clips, output_path, transition=
         "ffmpeg", "-y", "-i", source_path, "-filter_complex", filter_complex,
         "-map", "[vcat]", "-map", "[acat]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        # -r 30 -vsync cfr: NATERAJ tacno 30 konstantnih frejmova/sek. Bez ovoga
+        # izvorni snimak (cesto blago nepravilnog broja frejmova/sek, uobicajeno
+        # kod snimljenih poziva/podkasta) prenosi tu nepravilnost u iseceni klip,
+        # sto zbunjuje Remotion renderer ("No frame found at position X").
+        "-r", "30", "-vsync", "cfr",
         "-c:a", "aac", "-b:a", "192k", output_path,
     ]
     print(f"Spajam {n} izjava sa {transition}s tranzicijama...")
