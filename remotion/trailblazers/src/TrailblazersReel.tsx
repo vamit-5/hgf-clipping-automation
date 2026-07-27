@@ -60,8 +60,8 @@ function seededRandom(seed: number) {
 // panPx pomera (neisecen, sirok) video horizontalno: POZITIVNA vrednost
 // pomera video UDESNO sto otkriva LEVI deo izvornog kadra (levi govornik),
 // NEGATIVNA otkriva desni deo. 0 = centar/oba u kadru (kratko, retko).
-const PAN_LEFT = 620;
-const PAN_RIGHT = -560;
+const PAN_LEFT = 950;
+const PAN_RIGHT = -850;
 const PAN_CENTER = 0;
 
 function buildCameraBeats(words: Word[], minBeatSeconds: number): CameraBeat[] {
@@ -117,7 +117,7 @@ function useCameraState(beats: CameraBeat[]) {
           extrapolateRight: "clamp",
     });
     // Spor, kontinuiran "disanje"-zum tokom celog drzanja kadra (Ken Burns).
-    const holdZoom = 1.08 + holdProgress * 0.12;
+    const holdZoom = 1.02 + holdProgress * 0.08;
 
     // "Punch" - brz nalet zuma odmah posle reza, pa smirivanje - daje
     // energican, "seckan" osecaj na svakom rezu kamere.
