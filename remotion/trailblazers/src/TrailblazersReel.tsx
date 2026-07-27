@@ -1,7 +1,15 @@
 import React from "react";
-import { AbsoluteFill, OffthreadVideo, Audio, staticFile, useCurrentFrame, useVideoConfig, interpolate } from "remotion";
+import {
+    AbsoluteFill,
+    OffthreadVideo,
+    Audio,
+    staticFile,
+    useCurrentFrame,
+    useVideoConfig,
+    interpolate,
+} from "remotion";
 import { z } from "zod";
-import { Captions } from "./Captions";
+import { Captions, groupWords, Word } from "./Captions";
 import { Branding } from "./Branding";
 import { BackgroundAccents } from "./BackgroundAccents";
 
@@ -21,35 +29,116 @@ export const trailblazersReelSchema = z.object({
 
 type Props = z.infer<typeof trailblazersReelSchema>;
 
-// Ken Burns efekat: spor, kontinuiran zum + horizontalno pomeranje kadra.
-// Podkast je snimljen u 16:9 (dva govornika sede levo i desno od okruglog
-// stola), a mi secemo u 9:16 (portret). Bez ovoga kadar je STATICNO centriran
-// - sto znaci da cesto pada TACNO na praznu sredinu (sto stvara "prazan
-// kadar" problem). Ovaj efekat sporo pomera fokus levo-centar-desno-centar
-// u krugu, uz blagi kontinuirani zum, tako da retko "zaglavi" dugo na
-// praznom delu, i dodaje kinematican, "premium" osecaj pokreta.
-//
-// NAPOMENA: ovo NIJE pravo prepoznavanje ko trenutno prica (to bi trazilo
-// diarizaciju - poseban audio-analiza korak). Ovo je opsti, "slepi" pokret
-// koji poboljsava osecaj i smanjuje sansu da kamera stane na prazninu, ali
-// ne garantuje da je uvek fokusirana bas na osobu koja prica.
-function useKenBurnsTransform(cycleSeconds: number, maxZoom: number, maxPanPercent: number) {
+// Izvorni podkast je snimljen u 16:9, dva govornika sede levo/desno od
+// okruglog stola. Mi secemo u 9:16. VAZNO: "objectFit: cover" bi automatski
+// isekao video na usku CENTRALNU traku PRE nego sto nas pan/zoom uopste
+// stigne da se primeni - to je bio uzrok "prazne sredine" problema. Zato
+// ovde RUCNO racunamo pravu sirinu videa (skalirano da popuni visinu
+// kadra) i sami pomeramo/zumiramo TAJ neisecen video, cime stvarno mozemo
+// da dovedemo levog ili desnog govornika u centar kadra.
+const CANVAS_WIDTH = 1080;
+const CANVAS_HEIGHT = 1920;
+const SOURCE_ASPECT = 16 / 9;
+const RENDERED_VIDEO_WIDTH = CANVAS_HEIGHT * SOURCE_ASPECT; // ~3413px
+
+// Kamera "beat"-ovi: diskretni rezovi (ne spor kontinuiran pan) sinhronizovani
+// sa promenama titlova, sa pretezno LEVIM fokusom (fallback bez prepoznavanja
+// govornika - govornik u standalone_advice klipovima je najcesce levo),
+// povremenim kratkim "sirim" kadrom za varijaciju, i retko desnim.
+type CameraBeat = { start: number; end: number; panPx: number };
+
+function seededRandom(seed: number) {
+    let state = seed;
+    return () => {
+          state = (state * 9301 + 49297) % 233280;
+          return state / 233280;
+    };
+}
+
+// panPx pomera (neisecen, sirok) video horizontalno: POZITIVNA vrednost
+// pomera video UDESNO sto otkriva LEVI deo izvornog kadra (levi govornik),
+// NEGATIVNA otkriva desni deo. 0 = centar/oba u kadru (kratko, retko).
+const PAN_LEFT = 620;
+const PAN_RIGHT = -560;
+const PAN_CENTER = 0;
+
+function buildCameraBeats(words: Word[], minBeatSeconds: number): CameraBeat[] {
+    const groups = groupWords(words);
+    if (groups.length === 0) return [];
+
+    const rand = seededRandom(17);
+    const rawBeats: { start: number; end: number }[] = [];
+    let currentStart: number | null = null;
+    let currentEnd = 0;
+
+    for (const g of groups) {
+          const gStart = g[0].start;
+          const gEnd = g[g.length - 1].end;
+          if (currentStart === null) {
+                  currentStart = gStart;
+                  currentEnd = gEnd;
+                  continue;
+          }
+          if (gEnd - currentStart >= minBeatSeconds) {
+                  rawBeats.push({ start: currentStart, end: gEnd });
+                  currentStart = null;
+          } else {
+                  currentEnd = gEnd;
+          }
+    }
+    if (currentStart !== null) {
+          rawBeats.push({ start: currentStart, end: Math.max(currentEnd, currentStart + minBeatSeconds) });
+    }
+
+    return rawBeats.map((b) => {
+          const r = rand();
+          let panPx: number;
+          if (r < 0.6) panPx = PAN_LEFT;
+          else if (r < 0.82) panPx = PAN_CENTER;
+          else panPx = PAN_RIGHT;
+          return { start: b.start, end: b.end, panPx };
+    });
+}
+
+function useCameraState(beats: CameraBeat[]) {
     const frame = useCurrentFrame();
     const { fps } = useVideoConfig();
     const t = frame / fps;
 
-    // Kontinuirani, spori "disanje" izmedju leve i desne strane (sinusoida),
-    // plus blagi kontinuirani zum-in tokom celog klipa.
-    const cyclePos = (t % cycleSeconds) / cycleSeconds; // 0 -> 1 -> 0 ciklicno
-    const panWave = Math.sin(cyclePos * Math.PI * 2); // -1 .. 1
-    const panPercent = panWave * maxPanPercent;
+    const beat =
+          beats.find((b) => t >= b.start && t < b.end) ??
+          beats[beats.length - 1] ?? { start: 0, end: 1, panPx: PAN_LEFT };
 
-    const zoomProgress = interpolate(t, [0, cycleSeconds * 3], [0, 1], {
-        extrapolateRight: "clamp",
+    const beatDuration = Math.max(0.5, beat.end - beat.start);
+    const holdProgress = interpolate(t, [beat.start, beat.end], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
     });
-    const scale = 1 + zoomProgress * (maxZoom - 1);
+    // Spor, kontinuiran "disanje"-zum tokom celog drzanja kadra (Ken Burns).
+    const holdZoom = 1.08 + holdProgress * 0.12;
 
-    return { scale, panPercent };
+    // "Punch" - brz nalet zuma odmah posle reza, pa smirivanje - daje
+    // energican, "seckan" osecaj na svakom rezu kamere.
+    const timeSinceCut = t - beat.start;
+    const punch = interpolate(timeSinceCut, [0, 0.18], [1.14, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+    });
+
+    // Kratak beo bljesak na svakom rezu - vizuelni "wow" akcenat.
+    const flashOpacity = interpolate(
+          timeSinceCut,
+          [0, 0.05, 0.16],
+          [0.28, 0.08, 0],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+
+    return {
+          panPx: beat.panPx,
+          scale: holdZoom * punch,
+          flashOpacity,
+          beatDuration,
+    };
 }
 
 export const TrailblazersReel: React.FC<Props> = ({
@@ -58,7 +147,8 @@ export const TrailblazersReel: React.FC<Props> = ({
     bgMusicVolume,
     words,
 }) => {
-    const { scale, panPercent } = useKenBurnsTransform(9, 1.18, 6);
+    const beats = React.useMemo(() => buildCameraBeats(words, 2.6), [words]);
+    const { panPx, scale, flashOpacity } = useCameraState(beats);
 
     return (
           <AbsoluteFill style={{ backgroundColor: "#000" }}>
@@ -66,14 +156,18 @@ export const TrailblazersReel: React.FC<Props> = ({
                       <OffthreadVideo
                                 src={staticFile(videoPath)}
                                 style={{
-                                    width: "100%",
-                                    height: "100%",
-                                    objectFit: "cover",
-                                    transform: `scale(${scale}) translateX(${panPercent}%)`,
+                                    position: "absolute",
+                                    top: 0,
+                                    left: "50%",
+                                    height: CANVAS_HEIGHT,
+                                    width: RENDERED_VIDEO_WIDTH,
+                                    objectFit: "fill",
+                                    transform: `translateX(calc(-50% + ${panPx}px)) scale(${scale})`,
                                     transformOrigin: "center center",
                                 }}
                               />
                   </AbsoluteFill>
+                  <AbsoluteFill style={{ backgroundColor: "#FFFFFF", opacity: flashOpacity }} />
                   <BackgroundAccents />
                   <Branding />
                   <Captions words={words} />
