@@ -1,0 +1,50 @@
+name: Trailblazers - Automatski raspored (10x dnevno)
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  schedule-reel:
+    runs-on: self-hosted
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Python
+        run: python --version
+
+      - name: Install ffmpeg
+        run: ffmpeg -version
+
+      - name: Verify Node.js
+        run: node --version
+
+      - name: Install Remotion dependencies
+        working-directory: remotion/trailblazers
+        run: npm install
+
+      - name: Install Python deps
+        run: pip install requests google-auth google-auth-httplib2 google-api-python-client httplib2 opencv-python-headless==4.10.0.84
+
+      - name: Run scheduled reel (may auto-publish to Instagram)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GDRIVE_CREDENTIALS_JSON: ${{ secrets.GDRIVE_CREDENTIALS_JSON }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: python trailblazers_schedule.py
+
+      - name: Upload result as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trailblazers-schedule-output
+          path: |
+            output_clips_schedule/
+          retention-days: 3
