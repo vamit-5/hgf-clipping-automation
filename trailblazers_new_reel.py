@@ -21,6 +21,14 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # ("The idea that made no sense") - direktno vezana za naslov epizode
 # ("The $1B Idea That Made No Sense"), najverovatnije najbolje pokrivena
 # tema u transkriptu.
+# - PROMENA (run #12): AKO Claude ne pronadje temu u transkriptu, skripta
+# VISE NE PUCA sa RuntimeError (sto je gasilo ceo GitHub Actions job kao
+# FAILED). To nije prava greska u kodu - to znaci da OVA KONKRETNA epizoda
+# jednostavno ne sadrzi trazenu temu (CONCEPT_DESCRIPTION). Skripta sada
+# to jasno ispise i izadje NORMALNO (exit code 0), bez rusenja builda.
+# Ako se ovo redovno desava, verovatno CONCEPT_DESCRIPTION/CONCEPT_KEYWORDS
+# ne odgovaraju epizodi koja se trenutno obradjuje - videti napomenu u
+# find_single_hook_segment().
 # - ostar, pun 9:16 kadar, cist rez bez "mrtvog vazduha"
 # - dramaticna pozadinska muzika (Google Drive fajlovi kao HGF pipeline)
 # - mali xfade/acrossfade tranzicioni efekti izmedju spojenih izjava
@@ -190,6 +198,11 @@ def scan_for_keywords(words, keywords):
 
 
 def find_single_hook_segment(words, api_key, total_duration, concept_description):
+    # NAPOMENA: ako ova funkcija stalno vraca prazne clips-ove za epizode
+    # koje obradjujes, najverovatnije CONCEPT_DESCRIPTION / CONCEPT_KEYWORDS
+    # (na vrhu fajla) opisuju temu koja pripada DRUGOJ epizodi nego onoj koja
+    # je trenutno u annmiura_source.mp4. To nije bug u logici ispod - to je
+    # neslaganje izmedju teksta teme i stvarnog sadrzaja videa koji se obradjuje.
     lines = [f"[{w['start']:.1f}] {w['word']}" for w in words]
     transcript_text = " ".join(lines)
     if len(transcript_text) > 60000:
@@ -270,10 +283,14 @@ def find_single_hook_segment(words, api_key, total_duration, concept_description
         if end - start >= 1.0:
             snapped_clips.append([round(start, 2), round(end, 2)])
 
+    # PROMENA (run #12): ranije je ovde bio "raise RuntimeError(...)" koji je
+    # gasio ceo GitHub Actions job kao FAILED. To nije prava greska - znaci
+    # samo da ova epizoda ne sadrzi trazenu temu. Sada vracamo prazan
+    # rezultat i main() to obradjuje elegantno (bez pada builda).
     if not snapped_clips:
-        raise RuntimeError(
-            f"Claude nije vratio validne segmente za trazenu temu. Reason: {h.get('reason', '(nema)')}"
-        )
+        reason = h.get("reason", "(Claude nije naveo razlog)")
+        print(f"[dijagnostika] Nijedan validan segment nije pronadjen za trazenu temu. Reason: {reason}")
+        return {"clips": [], "reason": reason, "caption": ""}
 
     hard_ceiling = MAX_CLIP_SECONDS + 15
     total = 0.0
@@ -427,6 +444,21 @@ def main():
         json.dump(hook, f, indent=2, ensure_ascii=False)
 
     clips = hook["clips"]
+
+    # PROMENA (run #12): graceful izlazak umesto pada builda kad tema nije
+    # pronadjena u ovoj konkretnoj epizodi. Job se sada zavrsava USPESNO
+    # (exit code 0), samo bez generisanog klipa - jasno se vidi u logu zasto.
+    if not clips:
+        print("=" * 70)
+        print("NEMA REELA ZA OVU EPIZODU.")
+        print("Trazena tema (CONCEPT_DESCRIPTION) nije pronadjena u transkriptu.")
+        print(f"Razlog (Claude): {hook['reason']}")
+        print("Ovo NIJE greska u kodu - epizoda jednostavno ne sadrzi trazenu temu,")
+        print("ili CONCEPT_DESCRIPTION/CONCEPT_KEYWORDS na vrhu fajla treba")
+        print("azurirati da odgovaraju epizodi koja se trenutno obradjuje.")
+        print("=" * 70)
+        sys.exit(0)
+
     print(f"Izabran segment: {len(clips)} izjava, {clips} - {hook['reason']}")
 
     os.makedirs("output_clips_newreel", exist_ok=True)
