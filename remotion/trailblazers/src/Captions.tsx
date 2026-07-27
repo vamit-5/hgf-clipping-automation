@@ -38,7 +38,7 @@ export const Captions: React.FC<{ words: Word[] }> = ({ words }) => {
 
     return (
           <AbsoluteFill
-                  style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: "22%" }}
+                  style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: "32%" }}
                 >
                 <div
                           style={{
