@@ -33,6 +33,12 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # isti mehanizam kao trailblazers_publish.py) - sa sigurnosnom mrezom
 # koja garantuje da @trailblazers_pod tag UVEK udje u caption.
 # 7. Upisuje iskorisceni segment i dnevni brojac, pa oslobadja katanac.
+# - PROMENA (run #1 puste automatizacije): runner CISTI radni folder
+# izmedju pokretanja (self-hosted, ali working-directory se resetuje) -
+# rucno stavljen video fajl NE OPSTAJE izmedju cron pokretanja. Zato
+# skripta sad SAMA preuzima izvorni video sa Google Drive-a (isti
+# servisni nalog kao za pozadinsku muziku) ako fajl lokalno ne postoji -
+# nema vise rucnog kopiranja pre svakog pokretanja.
 # ---------------------------------------------------------------------------
 
 SOURCE_PATH = "annmiura_source.mp4"
@@ -49,6 +55,7 @@ BACKGROUND_AUDIO_FILE_IDS = [
     "1yHsLDQ9yUUe6VtppKUa_MD978Gz7OOHR",
     "1ANHCMAKisUvpxR8KYp0zRnkmKzblj8PN",
 ]
+SOURCE_VIDEO_FILE_ID = "1LUOtWlv4M_Zy4XxTAKcyojCfCerdHla1"
 BACKGROUND_AUDIO_VOLUME = 0.45
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -678,9 +685,14 @@ def main():
         access_token = os.environ["IG_ACCESS_TOKEN"]
 
         if not os.path.exists(SOURCE_PATH):
-            raise RuntimeError(
-                f"{SOURCE_PATH} ne postoji na runneru. Stavi video fajl rucno u working-directory."
-            )
+            print(f"{SOURCE_PATH} ne postoji lokalno - preuzimam sa Google Drive-a...")
+            if not os.environ.get("GDRIVE_CREDENTIALS_JSON"):
+                raise RuntimeError(
+                    "GDRIVE_CREDENTIALS_JSON nije podesen - ne mogu da preuzmem izvorni video."
+                )
+            drive_service = get_drive_service()
+            download_drive_file(drive_service, SOURCE_VIDEO_FILE_ID, SOURCE_PATH)
+            print(f"Izvorni video preuzet sa Google Drive-a: {SOURCE_PATH}")
 
         duration = get_duration_seconds(SOURCE_PATH)
         words = get_cached_transcript(SOURCE_PATH, openai_key)
