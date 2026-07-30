@@ -33,12 +33,15 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # isti mehanizam kao trailblazers_publish.py) - sa sigurnosnom mrezom
 # koja garantuje da @trailblazers_pod tag UVEK udje u caption.
 # 7. Upisuje iskorisceni segment i dnevni brojac, pa oslobadja katanac.
-# - PROMENA (run #1 puste automatizacije): runner CISTI radni folder
-# izmedju pokretanja (self-hosted, ali working-directory se resetuje) -
-# rucno stavljen video fajl NE OPSTAJE izmedju cron pokretanja. Zato
-# skripta sad SAMA preuzima izvorni video sa Google Drive-a (isti
-# servisni nalog kao za pozadinsku muziku) ako fajl lokalno ne postoji -
-# nema vise rucnog kopiranja pre svakog pokretanja.
+# - PROMENA: runner CISTI radni folder izmedju pokretanja - rucno stavljen
+# video fajl NE OPSTAJE izmedju cron pokretanja. Zato skripta sad SAMA
+# preuzima izvorni video sa Google Drive-a (isti servisni nalog kao za
+# pozadinsku muziku) ako fajl lokalno ne postoji.
+# - PROMENA: Remotion ume da preuzima svoj "headless browser" sa
+# storage.googleapis.com pri prvom renderu na masini, i to ume da pukne
+# na trenutnu mreznu gresku (DNS/konekcija). render_with_remotion sada
+# probava do 3 puta pre nego sto odustane, isti princip kao za sve druge
+# mrezne pozive u ovom fajlu.
 # ---------------------------------------------------------------------------
 
 SOURCE_PATH = "annmiura_source.mp4"
@@ -590,15 +593,30 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, face_
         f"--props={os.path.abspath(props_path)}",
         "--log=verbose",
     ]
-    print(f"Renderujem finalni video kroz Remotion (koristim: {npx_cmd})...")
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=REMOTION_TIMEOUT, cwd=REMOTION_WORKDIR
-    )
-    if result.returncode != 0:
-        print(result.stdout[-3000:])
-        print(result.stderr[-3000:])
-        raise RuntimeError("Remotion render nije uspeo.")
-    print(f"Remotion render zavrsen: {output_path}")
+
+    # Remotion ume da preuzima svoj "headless browser" sa
+    # storage.googleapis.com pri renderu, i to ume da pukne na trenutnu
+    # mreznu gresku (DNS/konekcija). Probamo do 3 puta pre nego sto
+    # odustanemo, isti princip kao i za sve druge mrezne pozive.
+    RENDER_ATTEMPTS = 3
+    last_error_output = ""
+    for attempt in range(1, RENDER_ATTEMPTS + 1):
+        print(f"Renderujem finalni video kroz Remotion (koristim: {npx_cmd}), pokusaj {attempt}/{RENDER_ATTEMPTS}...")
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=REMOTION_TIMEOUT, cwd=REMOTION_WORKDIR
+        )
+        if result.returncode == 0:
+            print(f"Remotion render zavrsen: {output_path}")
+            return
+        last_error_output = result.stdout[-2000:] + "\n" + result.stderr[-2000:]
+        print(f"[Remotion pokusaj {attempt}] Nije uspeo:")
+        print(last_error_output)
+        if attempt < RENDER_ATTEMPTS:
+            wait_seconds = 15 * attempt
+            print(f"Cekam {wait_seconds}s pre ponovnog pokusaja...")
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(f"Remotion render nije uspeo nakon {RENDER_ATTEMPTS} pokusaja. Poslednja greska:\n{last_error_output}")
 
 
 # --------------------------- Instagram objavljivanje -------------------------
