@@ -35,18 +35,17 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # 7. Upisuje iskorisceni segment i dnevni brojac, pa oslobadja katanac.
 # - PROMENA: runner CISTI radni folder izmedju pokretanja - rucno stavljen
 # video fajl NE OPSTAJE izmedju cron pokretanja. Zato skripta sad SAMA
-# preuzima izvorni video sa Google Drive-a (isti servisni nalog kao za
-# pozadinsku muziku) ako fajl lokalno ne postoji.
-# - PROMENA: Remotion ume da preuzima svoj "headless browser" sa
-# storage.googleapis.com pri prvom renderu na masini, i to ume da pukne
-# na trenutnu mreznu gresku (DNS/konekcija). render_with_remotion sada
-# probava do 3 puta pre nego sto odustane.
+# preuzima izvorni video sa Google Drive-a ako fajl lokalno ne postoji.
 # - PROMENA: SVI pozivi subprocess.run(..., text=True) sada eksplicitno
-# koriste encoding="utf-8", errors="replace". Bez toga, Windows/Python
-# pokusava da procita izlaz spoljasnjeg programa (ffmpeg/ffprobe/Remotion)
-# u starijem "cp1252" kodiranju, i puca sa UnicodeDecodeError cim se
-# pojavi znak koji to kodiranje ne razume - sto je rusilo ceo proces na
-# nepredvidljiv nacin (npr. result.stdout je ostajao None).
+# koriste encoding="utf-8", errors="replace" (sprecava UnicodeDecodeError
+# rusenje kad Remotion/ffmpeg ispisu znak koji stariji Windows kod ne zna).
+# - PROMENA: Remotion render komanda vise NE prosledjuje eksplicitnu
+# putanju do "entry" fajla kao poseban argument - novija verzija
+# Remotion-a je to pogresno tumacila kao ime kompozicije (greska "Could
+# not find composition with ID remotion/trailblazers/src/index.ts").
+# Remotion sam automatski pronalazi ulazni fajl (dokaz: log je vec ispravno
+# ispisao "Available compositions: TrailblazersReel"), pa mu sad dajemo
+# SAMO ime kompozicije i izlaznu putanju.
 # ---------------------------------------------------------------------------
 
 SOURCE_PATH = "annmiura_source.mp4"
@@ -67,7 +66,6 @@ SOURCE_VIDEO_FILE_ID = "1LUOtWlv4M_Zy4XxTAKcyojCfCerdHla1"
 BACKGROUND_AUDIO_VOLUME = 0.45
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-REMOTION_ENTRY = "remotion/trailblazers/src/index.ts"
 REMOTION_COMPOSITION_ID = "TrailblazersReel"
 REMOTION_WORKDIR = "remotion/trailblazers"
 
@@ -602,17 +600,16 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, face_
         json.dump(props, f)
 
     npx_cmd = shutil.which("npx") or "npx"
+    # NAPOMENA: entry-point vise NE prosledjujemo kao poseban argument -
+    # Remotion ga sam pronalazi (konvencija: src/index.ts), a noviji CLI
+    # je eksplicitnu putanju tumacio kao ime kompozicije umesto kao entry.
     cmd = [
         npx_cmd, "remotion", "render",
-        REMOTION_ENTRY, REMOTION_COMPOSITION_ID, os.path.abspath(output_path),
+        REMOTION_COMPOSITION_ID, os.path.abspath(output_path),
         f"--props={os.path.abspath(props_path)}",
         "--log=verbose",
     ]
 
-    # Remotion ume da preuzima svoj "headless browser" sa
-    # storage.googleapis.com pri renderu, i to ume da pukne na trenutnu
-    # mreznu gresku (DNS/konekcija). Probamo do 3 puta pre nego sto
-    # odustanemo, isti princip kao i za sve druge mrezne pozive.
     RENDER_ATTEMPTS = 3
     last_error_output = ""
     for attempt in range(1, RENDER_ATTEMPTS + 1):
