@@ -40,8 +40,13 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 # - PROMENA: Remotion ume da preuzima svoj "headless browser" sa
 # storage.googleapis.com pri prvom renderu na masini, i to ume da pukne
 # na trenutnu mreznu gresku (DNS/konekcija). render_with_remotion sada
-# probava do 3 puta pre nego sto odustane, isti princip kao za sve druge
-# mrezne pozive u ovom fajlu.
+# probava do 3 puta pre nego sto odustane.
+# - PROMENA: SVI pozivi subprocess.run(..., text=True) sada eksplicitno
+# koriste encoding="utf-8", errors="replace". Bez toga, Windows/Python
+# pokusava da procita izlaz spoljasnjeg programa (ffmpeg/ffprobe/Remotion)
+# u starijem "cp1252" kodiranju, i puca sa UnicodeDecodeError cim se
+# pojavi znak koji to kodiranje ne razume - sto je rusilo ceo proces na
+# nepredvidljiv nacin (npr. result.stdout je ostajao None).
 # ---------------------------------------------------------------------------
 
 SOURCE_PATH = "annmiura_source.mp4"
@@ -167,7 +172,10 @@ def add_used_segment(clips, hook_label):
 # --------------------------- git-baziran katanac -----------------------------
 
 def run_git(args, check=True):
-    return subprocess.run(["git"] + args, capture_output=True, text=True, timeout=60, check=check)
+    return subprocess.run(
+        ["git"] + args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=60, check=check,
+    )
 
 
 LOCK_HELD = False
@@ -252,7 +260,10 @@ def acquire_lock():
 
 def get_duration_seconds(path):
     cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", path]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=FFPROBE_TIMEOUT)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True, timeout=FFPROBE_TIMEOUT,
+    )
     return float(json.loads(result.stdout)["format"]["duration"])
 
 
@@ -260,7 +271,9 @@ def extract_audio(source_path, audio_path, duration_seconds):
     target_bitrate = max(24, min(64, int((23 * 8 * 1024) / duration_seconds)))
     print(f"Izdvajam audio pri {target_bitrate}kbps...")
     cmd = ["ffmpeg", "-y", "-i", source_path, "-vn", "-ac", "1", "-b:a", f"{target_bitrate}k", audio_path]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=FFMPEG_TIMEOUT,
+    )
     if result.returncode != 0:
         print(result.stderr[-3000:])
         raise RuntimeError("Izdvajanje audia nije uspelo.")
@@ -459,7 +472,9 @@ def build_supercut_with_transitions(source_path, clips, output_path, transition=
         "-c:a", "aac", "-b:a", "192k", output_path,
     ]
     print(f"Spajam {n} izjava sa {transition}s tranzicijama...")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=FFMPEG_TIMEOUT,
+    )
     if result.returncode != 0:
         print(result.stderr[-3000:])
         raise RuntimeError("Spajanje sa tranzicijama nije uspelo.")
@@ -603,12 +618,15 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, face_
     for attempt in range(1, RENDER_ATTEMPTS + 1):
         print(f"Renderujem finalni video kroz Remotion (koristim: {npx_cmd}), pokusaj {attempt}/{RENDER_ATTEMPTS}...")
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=REMOTION_TIMEOUT, cwd=REMOTION_WORKDIR
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=REMOTION_TIMEOUT, cwd=REMOTION_WORKDIR,
         )
         if result.returncode == 0:
             print(f"Remotion render zavrsen: {output_path}")
             return
-        last_error_output = result.stdout[-2000:] + "\n" + result.stderr[-2000:]
+        stdout_part = (result.stdout or "")[-2000:]
+        stderr_part = (result.stderr or "")[-2000:]
+        last_error_output = stdout_part + "\n" + stderr_part
         print(f"[Remotion pokusaj {attempt}] Nije uspeo:")
         print(last_error_output)
         if attempt < RENDER_ATTEMPTS:
