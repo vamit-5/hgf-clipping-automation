@@ -14,38 +14,23 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 # ---------------------------------------------------------------------------
-# Trailblazers x Ann Miura-Ko - PUNA AUTOMATIZACIJA (cilj: 10 objava dnevno).
-# Pokrece se na rasporedu (GitHub Actions cron, npr. svakih 20 min). Svaki
-# put kad se pokrene:
-# 1. Ako je dnevni cilj (10) vec dostignut danas, tiho izadji bez posla.
-# 2. Zauzmi git-baziran "katanac" (isti mehanizam kao HGF run_schedule.py)
-# da spreci da se dva paralelna pokretanja preklope.
-# 3. Transkript istog video fajla se KESIRA (state/) - ne placa se Whisper
-# iznova svaki put za isti fajl.
-# 4. Trazi od Claude-a JEDAN nov hook: prvo probava sledecu neiskoriscenu
-# od 5 zvanicno odobrenih ideja iz brief-a; kad se sve 5 iskoriste,
-# Claude sam predlaze DODATNE hookove u istom duhu pravila (standalone
-# advice / hot-take-contrarian / story clip), izbegavajuci vec
-# iskoriscene delove transkripta (state/trailblazers_used_segments.json).
-# 5. Isti pipeline kao trailblazers_new_reel.py: secenje+tranzicije
-# (ffmpeg), STVARNA detekcija lica (OpenCV), animirani render (Remotion).
-# 6. AUTOMATSKI OBJAVLJUJE na Instagram (Cloudinary upload + IG Graph API,
-# isti mehanizam kao trailblazers_publish.py) - sa sigurnosnom mrezom
-# koja garantuje da @trailblazers_pod tag UVEK udje u caption.
-# 7. Upisuje iskorisceni segment i dnevni brojac, pa oslobadja katanac.
-# - PROMENA: runner CISTI radni folder izmedju pokretanja - rucno stavljen
-# video fajl NE OPSTAJE izmedju cron pokretanja. Zato skripta sad SAMA
-# preuzima izvorni video sa Google Drive-a ako fajl lokalno ne postoji.
-# - PROMENA: SVI pozivi subprocess.run(..., text=True) sada eksplicitno
-# koriste encoding="utf-8", errors="replace" (sprecava UnicodeDecodeError
-# rusenje kad Remotion/ffmpeg ispisu znak koji stariji Windows kod ne zna).
-# - PROMENA: Remotion render komanda vise NE prosledjuje eksplicitnu
-# putanju do "entry" fajla kao poseban argument - novija verzija
-# Remotion-a je to pogresno tumacila kao ime kompozicije (greska "Could
-# not find composition with ID remotion/trailblazers/src/index.ts").
-# Remotion sam automatski pronalazi ulazni fajl (dokaz: log je vec ispravno
-# ispisao "Available compositions: TrailblazersReel"), pa mu sad dajemo
-# SAMO ime kompozicije i izlaznu putanju.
+# Trailblazers x Ann Miura-Ko - DEO 1 od 2: pravi finalni video (ostaje na
+# self-hosted runneru, jer treba OpenCV/Remotion/ffmpeg - lokalni resursi).
+# - PROMENA (razdvajanje na 2 posla): OVAJ fajl VISE NE OBJAVLJUJE na
+# Instagram. Umesto toga, cuva final_reel.mp4 + podatke za objavu
+# (caption, koriscen segment, naziv hook-a) u
+# output_clips_schedule/publish_data.json, koje GitHub Actions workflow
+# prosledjuje kao "artifact" DRUGOM poslu (trailblazers_schedule_publish.py)
+# koji se izvrsava na GitHub-ovom cloud serveru (ne na tvom racunaru).
+# Razlog: identican, potpuno ispravan Instagram token je USPESNO radio
+# pozvan sa GitHub cloud IP adrese, ali je DOSLEDNO padao sa "session
+# invalidated" kad je pozvan sa ovog kucnog racunara - sto ukazuje da Meta
+# filtrira/degradira zahteve sa te IP adrese/mreze, ne da je token neispravan.
+# - Dnevni brojac i "iskorisceni segmenti" se VISE NE azuriraju ovde - to
+# sad radi drugi skript, TEK POSLE potvrdjene uspesne objave (da se ne
+# oznaci tema kao "iskoriscena" ako objava nikad nije uspela).
+# - Git-baziran katanac se i dalje zauzima/oslobadja OVDE (stiti od
+# preklapanja teskih poslova pravljenja videa na istom racuneru).
 # ---------------------------------------------------------------------------
 
 SOURCE_PATH = "annmiura_source.mp4"
@@ -77,6 +62,9 @@ USED_SEGMENTS_PATH = os.path.join(STATE_DIR, "trailblazers_used_segments.json")
 DAILY_COUNTER_PATH = os.path.join(STATE_DIR, "trailblazers_daily_counter.json")
 LOCK_PATH = os.path.join(STATE_DIR, "trailblazers_lock.txt")
 LOCK_FRESH_MINUTES = 25  # duze od najsporijeg moguceg pokretanja
+
+OUTPUT_DIR = "output_clips_schedule"
+PUBLISH_DATA_PATH = os.path.join(OUTPUT_DIR, "publish_data.json")
 
 # 5 zvanicno odobrenih ideja iz brief-a (CLIPFARM - Ann Miura-Ko x Trailblazers)
 APPROVED_IDEAS = [
@@ -151,20 +139,18 @@ def get_daily_count():
     return int(data.get("count", 0))
 
 
-def increment_daily_count():
-    count = get_daily_count() + 1
-    save_json(DAILY_COUNTER_PATH, {"date": today_str(), "count": count})
-    return count
-
-
 def get_used_segments():
     return load_json(USED_SEGMENTS_PATH, [])
 
 
-def add_used_segment(clips, hook_label):
-    used = get_used_segments()
-    used.append({"clips": clips, "hook": hook_label, "at": datetime.datetime.utcnow().isoformat()})
-    save_json(USED_SEGMENTS_PATH, used)
+def write_github_output(key, value):
+    """Upisuje vrednost u GITHUB_OUTPUT fajl da bi je drugi posao u istom
+    workflow-u mogao da procita (npr. da li uopste treba da pokusa objavu)."""
+    output_path = os.environ.get("GITHUB_OUTPUT")
+    if not output_path:
+        return
+    with open(output_path, "a", encoding="utf-8") as f:
+        f.write(f"{key}={value}\n")
 
 
 # --------------------------- git-baziran katanac -----------------------------
@@ -594,15 +580,12 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, face_
         "words": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in words],
         "facePositions": face_positions,
     }
-    props_path = "output_clips_schedule/remotion_props.json"
-    os.makedirs("output_clips_schedule", exist_ok=True)
+    props_path = os.path.join(OUTPUT_DIR, "remotion_props.json")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(props_path, "w", encoding="utf-8") as f:
         json.dump(props, f)
 
     npx_cmd = shutil.which("npx") or "npx"
-    # NAPOMENA: entry-point vise NE prosledjujemo kao poseban argument -
-    # Remotion ga sam pronalazi (konvencija: src/index.ts), a noviji CLI
-    # je eksplicitnu putanju tumacio kao ime kompozicije umesto kao entry.
     cmd = [
         npx_cmd, "remotion", "render",
         REMOTION_COMPOSITION_ID, os.path.abspath(output_path),
@@ -634,88 +617,22 @@ def render_with_remotion(video_path, words, duration_seconds, output_path, face_
     raise RuntimeError(f"Remotion render nije uspeo nakon {RENDER_ATTEMPTS} pokusaja. Poslednja greska:\n{last_error_output}")
 
 
-# --------------------------- Instagram objavljivanje -------------------------
-
-def upload_to_cloudinary(path, cloud_name, upload_preset):
-    url = f"https://api.cloudinary.com/v1_1/{cloud_name}/video/upload"
-
-    def do_upload():
-        with open(path, "rb") as f:
-            files = {"file": f}
-            data = {"upload_preset": upload_preset}
-            return requests.post(url, files=files, data=data, timeout=300)
-
-    response = retry_request(do_upload, "Cloudinary upload")
-    secure_url = response.json()["secure_url"]
-    print(f"Cloudinary URL: {secure_url}")
-    return secure_url
-
-
-def create_ig_container(ig_user_id, access_token, video_url, caption):
-    url = f"https://graph.instagram.com/v23.0/{ig_user_id}/media"
-    payload = {
-        "media_type": "REELS",
-        "video_url": video_url,
-        "caption": caption,
-        "access_token": access_token,
-    }
-
-    def do_create():
-        return requests.post(url, data=payload, timeout=60)
-
-    response = retry_request(do_create, "IG container kreiranje")
-    creation_id = response.json()["id"]
-    print(f"Instagram creation_id: {creation_id}")
-    return creation_id
-
-
-def wait_until_ready(creation_id, access_token, max_wait_seconds=600, poll_interval=15):
-    url = f"https://graph.instagram.com/v23.0/{creation_id}"
-    waited = 0
-    while waited < max_wait_seconds:
-        response = requests.get(url, params={"fields": "status_code", "access_token": access_token}, timeout=60)
-        status = response.json().get("status_code")
-        print(f"Status obrade na Instagramu: {status}")
-        if status == "FINISHED":
-            return
-        if status == "ERROR":
-            raise RuntimeError("Instagram je prijavio gresku pri obradi videa.")
-        time.sleep(poll_interval)
-        waited += poll_interval
-    raise RuntimeError("Instagram obrada videa nije zavrsena u ocekivanom vremenu.")
-
-
-def publish_container(ig_user_id, access_token, creation_id):
-    url = f"https://graph.instagram.com/v23.0/{ig_user_id}/media_publish"
-    payload = {"creation_id": creation_id, "access_token": access_token}
-
-    def do_publish():
-        return requests.post(url, data=payload, timeout=60)
-
-    response = retry_request(do_publish, "Instagram publish")
-    media_id = response.json()["id"]
-    print(f"OBJAVLJENO! Media ID: {media_id}")
-    return media_id
-
-
 # --------------------------- glavni tok ---------------------------------------
 
 def main():
     daily_count = get_daily_count()
     if daily_count >= DAILY_TARGET:
         print(f"[cilj] Danas je vec objavljeno {daily_count}/{DAILY_TARGET}. Zavrseno za danas, izlazim.")
+        write_github_output("should_publish", "false")
         return
 
     if not acquire_lock():
+        write_github_output("should_publish", "false")
         return
 
     try:
         openai_key = os.environ["OPENAI_API_KEY"]
         anthropic_key = os.environ["ANTHROPIC_API_KEY"]
-        cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"]
-        upload_preset = os.environ["CLOUDINARY_UPLOAD_PRESET"]
-        ig_user_id = os.environ["IG_USER_ID"]
-        access_token = os.environ["IG_ACCESS_TOKEN"]
 
         if not os.path.exists(SOURCE_PATH):
             print(f"{SOURCE_PATH} ne postoji lokalno - preuzimam sa Google Drive-a...")
@@ -735,20 +652,21 @@ def main():
 
         if hook is None:
             print("[hook] Nijedna nova, neponovljena tema nije pronadjena za sada. Preskacem ovaj run.")
+            write_github_output("should_publish", "false")
             return
 
         clips = hook["clips"]
         print(f"Izabran segment: {len(clips)} izjava, {clips} - {hook['hook_label']}")
 
-        os.makedirs("output_clips_schedule", exist_ok=True)
-        supercut_path = "output_clips_schedule/supercut.mp4"
-        final_path = "output_clips_schedule/final_reel.mp4"
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        supercut_path = os.path.join(OUTPUT_DIR, "supercut.mp4")
+        final_path = os.path.join(OUTPUT_DIR, "final_reel.mp4")
 
         build_supercut_with_transitions(SOURCE_PATH, clips, supercut_path)
         sc_duration = get_duration_seconds(supercut_path)
         print(f"Trajanje supercuta: {sc_duration:.1f}s")
 
-        sc_audio = "output_clips_schedule/supercut_audio.mp3"
+        sc_audio = os.path.join(OUTPUT_DIR, "supercut_audio.mp3")
         extract_audio(supercut_path, sc_audio, sc_duration)
         sc_words = transcribe_audio(sc_audio, openai_key)
 
@@ -772,14 +690,14 @@ def main():
             face_positions, background_audio_path=chosen_background_audio,
         )
 
-        video_url = upload_to_cloudinary(final_path, cloud_name, upload_preset)
-        creation_id = create_ig_container(ig_user_id, access_token, video_url, hook["caption"])
-        wait_until_ready(creation_id, access_token)
-        publish_container(ig_user_id, access_token, creation_id)
+        save_json(PUBLISH_DATA_PATH, {
+            "caption": hook["caption"],
+            "clips": clips,
+            "hook_label": hook["hook_label"],
+        })
 
-        add_used_segment(clips, hook["hook_label"])
-        new_count = increment_daily_count()
-        print(f"[cilj] Objavljeno {new_count}/{DAILY_TARGET} danas.")
+        print(f"[build] Video i podaci za objavu spremni: {final_path}")
+        write_github_output("should_publish", "true")
 
     finally:
         release_lock()
